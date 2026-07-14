@@ -38,6 +38,27 @@
             "backgroundColor": "#000000"
           }
         }
+      ],
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "SusuTrack uses your camera to capture your ID document and a verification selfie.",
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#185FA5"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "SusuTrack uses your camera for identity verification (ID card and selfie capture)."
+        }
       ]
     ],
     "experiments": {
