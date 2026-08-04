@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { usePaystack } from 'react-native-paystack-webview';
 
 import AvatarInitials from '@/src/components/AvatarInitials';
+import ErrorState from '@/src/components/ErrorState';
 import { showToast } from '@/src/components/Toast';
 import { initializePayment, verifyPayment } from '@/src/api/contributions';
 import { Colors } from '@/src/constants/colors';
@@ -14,15 +15,83 @@ import { useGroupDetail } from '@/src/hooks/useGroups';
 import { calculatePaystackFee } from '@/src/utils/calculatePaystackFee';
 import { formatCurrency } from '@/src/utils/formatCurrency';
 
+// Shared header so the loading, error and empty states keep the back button —
+// otherwise a failed load would strand the user in a modal with no way out.
+function PaymentHeader({ user }: { user: ReturnType<typeof useAuth>['user'] }) {
+  return (
+    <View style={styles.header}>
+      <TouchableOpacity onPress={() => router.back()} hitSlop={10}>
+        <MaterialCommunityIcons name="arrow-left" size={24} color={Colors.primary} />
+      </TouchableOpacity>
+      <Text style={styles.headerTitle}>Pay contribution</Text>
+      <AvatarInitials
+        name={user?.name ?? 'You'}
+        photoUrl={user?.profilePhotoUrl}
+        size={32}
+        onPress={() => router.push('/(tabs)/profile')}
+      />
+    </View>
+  );
+}
+
 export default function PaymentScreen() {
   const { groupId } = useLocalSearchParams<{ groupId: string }>();
   const { user } = useAuth();
   // Detail carries the open cycle's id, which the contribution must target.
-  const { group } = useGroupDetail(groupId);
+  const { group, isLoading, error, refresh } = useGroupDetail(groupId);
   const { popup } = usePaystack();
   const [processing, setProcessing] = useState(false);
 
-  if (!group) return null;
+  // This screen used to `return null` whenever `group` was undefined, which is
+  // true for the entire fetch — and forever if the fetch failed. Tapping "Pay
+  // contribution" navigated here correctly and then showed a blank modal, so
+  // the button looked dead. A cold start on Render's free tier takes 30-60s,
+  // which turned a brief flicker into a minute of nothing.
+  if (isLoading && !group) {
+    return (
+      <SafeAreaView style={styles.screen} edges={['top']}>
+        <PaymentHeader user={user} />
+        <View style={styles.stateWrap}>
+          <ActivityIndicator color={Colors.primary} size="large" />
+          <Text style={styles.stateText}>Loading payment details…</Text>
+          <Text style={styles.stateHint}>
+            The server may be waking up — this can take up to a minute.
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (!group) {
+    return (
+      <SafeAreaView style={styles.screen} edges={['top']}>
+        <PaymentHeader user={user} />
+        <ErrorState
+          message={error ?? 'Could not load this group. Please try again.'}
+          onRetry={refresh}
+        />
+      </SafeAreaView>
+    );
+  }
+
+  // Loaded, but the admin closed the cycle between the group screen and here.
+  if (!group.currentCycleId) {
+    return (
+      <SafeAreaView style={styles.screen} edges={['top']}>
+        <PaymentHeader user={user} />
+        <View style={styles.stateWrap}>
+          <MaterialCommunityIcons name="clock-outline" size={44} color={Colors.textMuted} />
+          <Text style={styles.stateText}>No open cycle</Text>
+          <Text style={styles.stateHint}>
+            There is nothing to contribute to right now. Your admin needs to open the next cycle.
+          </Text>
+          <TouchableOpacity style={styles.stateButton} onPress={() => router.back()} activeOpacity={0.85}>
+            <Text style={styles.stateButtonLabel}>Back to group</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   // Member pays the processing fee on top; the group receives the full amount.
   const fee = calculatePaystackFee(group.contributionAmount);
@@ -88,19 +157,7 @@ export default function PaymentScreen() {
 
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} hitSlop={10}>
-          <MaterialCommunityIcons name="arrow-left" size={24} color={Colors.primary} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Pay contribution</Text>
-        {/* Own avatar → Profile tab. */}
-        <AvatarInitials
-          name={user?.name ?? 'You'}
-          photoUrl={user?.profilePhotoUrl}
-          size={32}
-          onPress={() => router.push('/(tabs)/profile')}
-        />
-      </View>
+      <PaymentHeader user={user} />
 
       <View style={styles.container}>
         <Text style={styles.amountLabel}>Total Contribution</Text>
@@ -174,6 +231,31 @@ const styles = StyleSheet.create({
     borderBottomColor: Colors.divider,
   },
   headerTitle: { fontSize: 17, fontWeight: '800', color: Colors.primary },
+  // Loading / error / no-open-cycle states. Previously this screen rendered
+  // null in all three cases, which read as a dead button.
+  stateWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 32,
+    gap: 12,
+  },
+  stateText: { fontSize: 16, fontWeight: '700', color: Colors.textPrimary, textAlign: 'center' },
+  stateHint: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 19,
+    maxWidth: 300,
+  },
+  stateButton: {
+    backgroundColor: Colors.primary,
+    borderRadius: 12,
+    paddingVertical: 13,
+    paddingHorizontal: 32,
+    marginTop: 8,
+  },
+  stateButtonLabel: { color: Colors.white, fontSize: 15, fontWeight: '700' },
   container: { flex: 1, alignItems: 'center', padding: 24, paddingTop: 40 },
   amountLabel: { fontSize: 13, color: Colors.textSecondary },
   amountValue: { fontSize: 40, fontWeight: '800', color: Colors.textPrimary, marginTop: 6 },

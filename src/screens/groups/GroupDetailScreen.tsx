@@ -94,6 +94,9 @@ export default function GroupDetailScreen() {
   }
 
   const isAdmin = group.role === 'organizer';
+  // getGroupDetail returns each member's status for the OPEN cycle, so the
+  // current user's own row tells us whether they've already contributed.
+  const alreadyPaid = group.members.some((m) => m.userId === user?.id && m.status === 'paid');
   const lateMember = group.members.find((m) => m.status === 'late' && !m.removed);
   const recipientMember = group.members.find((m) => m.userId === group.currentRecipientId);
 
@@ -420,7 +423,17 @@ export default function GroupDetailScreen() {
         }
       />
 
-      {group.hasOpenCycle ? (
+      {group.hasOpenCycle && alreadyPaid ? (
+        // Already contributed this cycle. Shown as a settled state rather than
+        // a live button: tapping through would only reach the backend's
+        // ALREADY_PAID rejection after a round trip.
+        <View style={[styles.payButton, styles.paidButton]}>
+          <MaterialCommunityIcons name="check-circle" size={20} color={Colors.success} />
+          <Text style={[styles.payButtonLabel, { color: Colors.success }]}>
+            Contribution paid
+          </Text>
+        </View>
+      ) : group.hasOpenCycle ? (
         <TouchableOpacity
           style={styles.payButton}
           activeOpacity={0.85}
@@ -646,6 +659,8 @@ const styles = StyleSheet.create({
   },
   payButtonLabel: { color: Colors.white, fontSize: 16, fontWeight: '700' },
   openCycleButton: { backgroundColor: Colors.primary },
+  // Settled state, not a button — flat so it doesn't invite a tap.
+  paidButton: { backgroundColor: Colors.successLight, elevation: 0, shadowOpacity: 0 },
   noCycleNote: { backgroundColor: Colors.divider, elevation: 0, shadowOpacity: 0 },
   noCycleText: { color: Colors.textSecondary, fontSize: 13, fontWeight: '600' },
 });
