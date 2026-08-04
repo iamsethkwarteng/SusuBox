@@ -1,8 +1,17 @@
-// Central place for backend endpoint config. Swap EXPO_PUBLIC_API_URL in a .env
-// file (Expo inlines EXPO_PUBLIC_* vars at build time) once the real backend is live.
-
+// Central place for backend endpoint config. Every request in the app resolves
+// through API_BASE_URL — there is no hardcoded host anywhere else — so pointing
+// at a different backend is a one-line change in .env.
+//
+// Expo inlines EXPO_PUBLIC_* at BUILD time, so after editing .env you must
+// restart the dev server (`npx expo start --clear`); a hot reload keeps the old
+// value baked into the bundle.
+//
+// The fallback is the live Render deployment rather than a placeholder domain:
+// if .env is missing (a fresh clone, or an EAS build without the var set) the
+// app still reaches a real backend instead of failing against a host that has
+// never existed.
 export const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_URL ?? 'https://api.susubox.app/v1';
+  process.env.EXPO_PUBLIC_API_URL ?? 'https://susubox-api-u1rg.onrender.com/api';
 
 // 30s: a free-tier host (e.g. Render) can take ~30-60s to wake from sleep on
 // the first request. A short timeout there surfaces as a bogus "cannot reach
