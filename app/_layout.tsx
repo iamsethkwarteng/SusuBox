@@ -70,7 +70,17 @@ export default function RootLayout() {
                 <Stack.Screen name="group/created" />
                 <Stack.Screen name="join-group" />
                 <Stack.Screen name="join/[code]" />
-                <Stack.Screen name="payment" options={{ presentation: 'modal' }} />
+                {/* A plain pushed screen, NOT presentation:'modal'.
+                    PaystackProvider renders its checkout inside a React Native
+                    <Modal>, and it sits above this Stack in the tree. When the
+                    payment route was itself presented modally, Paystack was
+                    asking to stack a modal on top of an already-presented one —
+                    which silently never mounts, so the WebView's onLoadStart
+                    never fired and the sheet simply didn't appear.
+
+                    The personal-susu screens are plain pushed screens, which is
+                    exactly why checkout worked there and not here. */}
+                <Stack.Screen name="payment" />
                 <Stack.Screen name="momo-setup" />
                 <Stack.Screen name="notifications" />
                 <Stack.Screen name="settings/security" />
