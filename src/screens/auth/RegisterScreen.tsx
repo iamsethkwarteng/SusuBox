@@ -3,6 +3,7 @@ import { Link, router } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -14,9 +15,17 @@ import {
 import { TextInput } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { isNetworkError } from '@/src/api/client';
+import { sendPhoneOtp } from '@/src/api/otp';
+import { PHONE_OTP_ENABLED } from '@/src/constants/api';
 import { Colors } from '@/src/constants/colors';
 import { useAuth } from '@/src/hooks/useAuth';
-import IDCaptureScreen, { DOCUMENT_LABELS, type DocumentType } from '@/src/screens/auth/IDCaptureScreen';
+import IDCaptureScreen, {
+  DOCUMENT_LABELS,
+  validateIDNumber,
+  type DocumentType,
+} from '@/src/screens/auth/IDCaptureScreen';
+import PhoneOTPScreen from '@/src/screens/auth/PhoneOTPScreen';
 import SelfieScreen from '@/src/screens/auth/SelfieScreen';
 
 const TOTAL_STEPS = 4;
@@ -24,7 +33,7 @@ const TOTAL_STEPS = 4;
 // Update 10 — registration state survives the app being backgrounded/killed
 // mid-KYC. Stored in expo-secure-store (not AsyncStorage) because the blob
 // contains PII + the password; cleared on success or "Start over".
-const REG_STATE_KEY = 'susutrack_registration_state';
+const REG_STATE_KEY = 'susubox_registration_state';
 
 interface SavedRegistrationState {
   step: number;
@@ -33,8 +42,11 @@ interface SavedRegistrationState {
   email: string;
   password: string;
   documentType: DocumentType;
+  idNumber: string;
   idImageUrl: string | null;
   selfieUrl: string | null;
+  /** Proof the phone was OTP-verified; the register call is refused without it. */
+  phoneVerificationToken: string;
 }
 
 function StepHeader({ step, label, onBack }: { step: number; label?: string; onBack?: () => void }) {
@@ -48,7 +60,7 @@ function StepHeader({ step, label, onBack }: { step: number; label?: string; onB
         ) : (
           <View style={{ width: 24 }} />
         )}
-        <Text style={styles.headerTitle}>SusuSavings</Text>
+        <Text style={styles.headerTitle}>SusuBox</Text>
         <Text style={styles.headerStep}>
           {step === TOTAL_STEPS ? '100% Complete' : `STEP ${step} OF ${TOTAL_STEPS}`}
         </Text>
@@ -82,8 +94,16 @@ export default function RegisterScreen() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
+  // Phone OTP — a sub-state of step 1, NOT a new numbered step. Steps 2, 3 and
+  // 4 are untouched; the user simply can't leave step 1 until the code checks
+  // out, which is also enforced server-side at registration.
+  const [showOtp, setShowOtp] = useState(false);
+  const [sendingOtp, setSendingOtp] = useState(false);
+  const [phoneVerificationToken, setPhoneVerificationToken] = useState('');
+
   // Steps 2 + 3 — Cloudinary URLs only (never local file paths).
   const [documentType, setDocumentType] = useState<DocumentType>('ghana_card');
+  const [idNumber, setIdNumber] = useState('');
   const [idImageUrl, setIdImageUrl] = useState<string | null>(null);
   const [selfieUrl, setSelfieUrl] = useState<string | null>(null);
 
@@ -102,6 +122,10 @@ export default function RegisterScreen() {
           setEmail(saved.email);
           setPassword(saved.password);
           setDocumentType(saved.documentType);
+          // Older drafts (saved before the ID number field existed) have no
+          // idNumber — default it rather than writing `undefined` into state.
+          setIdNumber(saved.idNumber ?? '');
+          setPhoneVerificationToken(saved.phoneVerificationToken ?? '');
           setIdImageUrl(saved.idImageUrl);
           setSelfieUrl(saved.selfieUrl);
           setStep(saved.step);
@@ -124,13 +148,26 @@ export default function RegisterScreen() {
         email,
         password,
         documentType,
+        idNumber,
         idImageUrl,
         selfieUrl,
+        phoneVerificationToken,
         ...patch,
       };
       await SecureStore.setItemAsync(REG_STATE_KEY, JSON.stringify(state)).catch(() => undefined);
     },
-    [step, name, phone, email, password, documentType, idImageUrl, selfieUrl],
+    [
+      step,
+      name,
+      phone,
+      email,
+      password,
+      documentType,
+      idNumber,
+      idImageUrl,
+      selfieUrl,
+      phoneVerificationToken,
+    ],
   );
 
   const goToStep = (next: number) => {
@@ -145,15 +182,64 @@ export default function RegisterScreen() {
     setEmail('');
     setPassword('');
     setDocumentType('ghana_card');
+    setIdNumber('');
     setIdImageUrl(null);
     setSelfieUrl(null);
     setTcAccepted(false);
     setShowResumeBanner(false);
+    setShowOtp(false);
+    setPhoneVerificationToken('');
     setStep(1);
+  };
+
+  // Step 1 → OTP. The code goes to the number typed above, so a mistyped or
+  // borrowed number simply never receives one. On success the OTP screen takes
+  // over; step 2 is only reachable after it hands back a token.
+  const handleStep1Next = async () => {
+    if (!step1Valid || sendingOtp) return;
+    const cleaned = phone.replace(/[\s\-()]/g, '');
+    if (!/^0\d{9}$/.test(cleaned)) {
+      setError('Enter a valid Ghana phone number — 10 digits starting with 0.');
+      return;
+    }
+
+    // HUBTEL PENDING: with SMS off, no code could ever arrive, so step 1 goes
+    // straight to step 2. The backend skips its matching check while
+    // PHONE_OTP_ENABLED=false, and those accounts keep phone_verified: false.
+    if (!PHONE_OTP_ENABLED) {
+      goToStep(2);
+      return;
+    }
+
+    // Already verified this exact number in this session (e.g. user stepped
+    // back from step 2): don't spend another SMS.
+    if (phoneVerificationToken) {
+      goToStep(2);
+      return;
+    }
+
+    setSendingOtp(true);
+    setError(null);
+    try {
+      await sendPhoneOtp(cleaned);
+      setShowOtp(true);
+    } catch (err) {
+      const data = (err as { response?: { data?: { message?: string } } })?.response?.data;
+      setError(
+        isNetworkError(err)
+          ? 'Cannot reach the server. Make sure the backend is running and your phone is on the same Wi‑Fi.'
+          : (data?.message ?? 'Could not send the verification code. Please try again.'),
+      );
+    } finally {
+      setSendingOtp(false);
+    }
   };
 
   const step1Valid =
     name.trim().length > 1 && phone.trim().length >= 9 && email.includes('@') && password.length >= 8;
+
+  // Step 2 now needs BOTH the card photo and a well-formed ID number.
+  const step2Valid = Boolean(idImageUrl) && validateIDNumber(idNumber, documentType) === null;
 
   const goBack = () => {
     if (step === 1) {
@@ -169,13 +255,31 @@ export default function RegisterScreen() {
     setError(null);
     try {
       await register(
-        { name: name.trim(), phone: phone.trim(), email: email.trim(), password },
-        { documentType, idImageUrl, selfieImageUrl: selfieUrl },
+        {
+          name: name.trim(),
+          phone: phone.replace(/[\s\-()]/g, ''),
+          email: email.trim(),
+          password,
+          phoneVerificationToken,
+        },
+        { documentType, idNumber, idImageUrl, selfieImageUrl: selfieUrl },
       );
       await SecureStore.deleteItemAsync(REG_STATE_KEY).catch(() => undefined);
-      router.replace('/(tabs)');
-    } catch {
-      setError('Something went wrong creating your account. Please try again.');
+      // The account now exists and is logged in, but its email is unproven, so
+      // every protected route is closed. Go to verification, not the dashboard.
+      router.replace({
+        pathname: '/(auth)/verify-email',
+        params: { email: email.trim(), name: name.trim() },
+      });
+    } catch (err) {
+      // Surface the real cause instead of a blanket message: a network failure
+      // (backend down / wrong LAN IP / firewall) vs. a server response such as
+      // "This email is already registered".
+      const message = isNetworkError(err)
+        ? 'Cannot reach the server. Make sure the backend is running and your phone is on the same Wi‑Fi.'
+        : ((err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          'Something went wrong creating your account. Please try again.');
+      setError(message);
     } finally {
       setSubmitting(false);
     }
@@ -197,7 +301,25 @@ export default function RegisterScreen() {
           </View>
         ) : null}
 
-        {step === 1 && (
+        {/* Phone verification — still step 1 on the progress header, because
+            the user has not completed identity capture yet. */}
+        {step === 1 && showOtp && (
+          <>
+            <StepHeader step={1} onBack={() => setShowOtp(false)} />
+            <PhoneOTPScreen
+              phone={phone.replace(/[\s\-()]/g, '')}
+              onVerified={(token) => {
+                setPhoneVerificationToken(token);
+                setShowOtp(false);
+                setStep(2);
+                persistState({ step: 2, phoneVerificationToken: token });
+              }}
+              onBack={() => setShowOtp(false)}
+            />
+          </>
+        )}
+
+        {step === 1 && !showOtp && (
           <>
             <StepHeader step={1} onBack={goBack} />
             <Text style={styles.title}>Create your account</Text>
@@ -266,13 +388,19 @@ export default function RegisterScreen() {
             </Text>
 
             <TouchableOpacity
-              style={[styles.button, !step1Valid && styles.buttonDisabled]}
-              disabled={!step1Valid}
-              onPress={() => goToStep(2)}
+              style={[styles.button, (!step1Valid || sendingOtp) && styles.buttonDisabled]}
+              disabled={!step1Valid || sendingOtp}
+              onPress={handleStep1Next}
               activeOpacity={0.85}
             >
-              <Text style={styles.buttonLabel}>Next</Text>
-              <MaterialCommunityIcons name="chevron-right" size={20} color={Colors.white} />
+              {sendingOtp ? (
+                <ActivityIndicator color={Colors.white} />
+              ) : (
+                <>
+                  <Text style={styles.buttonLabel}>Next</Text>
+                  <MaterialCommunityIcons name="chevron-right" size={20} color={Colors.white} />
+                </>
+              )}
             </TouchableOpacity>
 
             <View style={styles.footerRow}>
@@ -296,18 +424,26 @@ export default function RegisterScreen() {
               documentType={documentType}
               onDocumentTypeChange={(type) => {
                 setDocumentType(type);
-                persistState({ documentType: type });
+                // The number format is document-specific, so a type switch
+                // invalidates whatever was typed for the previous one.
+                setIdNumber('');
+                persistState({ documentType: type, idNumber: '' });
               }}
               uploadedUrl={idImageUrl}
               onUploaded={(url) => {
                 setIdImageUrl(url);
                 persistState({ idImageUrl: url });
               }}
+              idNumber={idNumber}
+              onIdNumberChange={(value) => {
+                setIdNumber(value);
+                persistState({ idNumber: value });
+              }}
             />
 
             <TouchableOpacity
-              style={[styles.button, !idImageUrl && styles.buttonDisabled]}
-              disabled={!idImageUrl}
+              style={[styles.button, !step2Valid && styles.buttonDisabled]}
+              disabled={!step2Valid}
               onPress={() => goToStep(3)}
               activeOpacity={0.85}
             >
@@ -353,7 +489,7 @@ export default function RegisterScreen() {
 
             <ScrollView style={styles.termsCard} nestedScrollEnabled>
               <Text style={styles.termsIntro}>
-                Welcome to SusuSavings. By clicking &quot;Create account&quot;, you agree to be bound by the
+                Welcome to SusuBox. By clicking &quot;Create account&quot;, you agree to be bound by the
                 following terms and conditions which govern the relationship between you and our communal
                 savings platform.
               </Text>

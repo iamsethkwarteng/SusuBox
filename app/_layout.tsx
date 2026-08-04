@@ -8,6 +8,7 @@ import { PaystackProvider } from 'react-native-paystack-webview';
 import { PaperProvider } from 'react-native-paper';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import { registerPushToken } from '@/src/api/notifications';
 import OfflineBanner from '@/src/components/OfflineBanner';
 import { ToastHost } from '@/src/components/Toast';
 import { PAYSTACK_PUBLIC_KEY } from '@/src/constants/api';
@@ -21,14 +22,27 @@ export default function RootLayout() {
   const { sessionConflict, acknowledgeConflict } = useSession();
 
   useEffect(() => {
-    initFCM();
+    // initFCM() previously fetched a push token and only logged it — it was
+    // never sent to the backend, so users.fcm_token stayed null and every
+    // server-side sendFCM() call silently had nothing to push to. Register it
+    // now. NOTE: this is an Expo push token, not a raw Firebase Admin SDK
+    // token; the backend's admin.messaging().send() expects the latter, so a
+    // real push still won't deliver until the token formats are reconciled
+    // (swap to expo-server-sdk on the backend, or move to
+    // @react-native-firebase/messaging with a dev build — see the note in
+    // initFCM.ts). This fix at least closes the "token never left the device"
+    // gap; in-app notifications (the bell) already work regardless, since
+    // sendFCM always persists the Notification row before attempting a push.
+    initFCM().then((token) => {
+      if (token) registerPushToken(token).catch(() => {});
+    });
   }, []);
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <PaperProvider theme={paperTheme}>
-          <PaystackProvider publicKey={PAYSTACK_PUBLIC_KEY} currency="GHS">
+          <PaystackProvider publicKey={PAYSTACK_PUBLIC_KEY} currency="GHS" debug={__DEV__}>
             <View style={{ flex: 1 }}>
               <OfflineBanner />
               <Stack screenOptions={{ headerShown: false }}>
@@ -37,12 +51,23 @@ export default function RootLayout() {
                 <Stack.Screen name="(tabs)" />
                 <Stack.Screen name="group/[id]/index" />
                 <Stack.Screen name="group/[id]/rotation" />
+                <Stack.Screen name="group/[id]/payout" />
+                <Stack.Screen name="group/[id]/reports" />
                 <Stack.Screen name="group/create" />
                 <Stack.Screen name="group/created" />
                 <Stack.Screen name="join-group" />
                 <Stack.Screen name="join/[code]" />
                 <Stack.Screen name="payment" options={{ presentation: 'modal' }} />
+                <Stack.Screen name="momo-setup" />
                 <Stack.Screen name="notifications" />
+                <Stack.Screen name="settings/security" />
+                <Stack.Screen name="settings/two-fa-setup" />
+                <Stack.Screen name="settings/change-pin" />
+                <Stack.Screen name="settings/disable-2fa" />
+                <Stack.Screen name="settings/reset-pin" />
+                <Stack.Screen name="personal-susu/index" />
+                <Stack.Screen name="personal-susu/create" />
+                <Stack.Screen name="personal-susu/[id]" />
               </Stack>
 
               {/* Update 6 — full-screen "signed out on another device" modal. */}

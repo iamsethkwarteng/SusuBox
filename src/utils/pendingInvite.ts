@@ -1,12 +1,12 @@
 import * as SecureStore from 'expo-secure-store';
 
 // Update 8 — deep-link invites require an account. When a logged-out user taps
-// susutrack://join/<code> (or susutrack.app/join/<code>), the code is parked
+// susubox://join/<code> (or susubox.app/join/<code>), the code is parked
 // here so it survives app restarts; Login/Register read it to show the
 // "Log in to join [Group]" banner and forward the user to JoinGroupScreen
 // afterwards. Cleared once the join flow completes or is dismissed.
 
-const PENDING_INVITE_KEY = 'susutrack_pending_invite';
+const PENDING_INVITE_KEY = 'susubox_pending_invite';
 
 export interface PendingInvite {
   code: string;

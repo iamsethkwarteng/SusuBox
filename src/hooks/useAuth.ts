@@ -1,15 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import * as authApi from '@/src/api/auth';
-import {
-  clearToken,
-  getToken,
-  isActiveSessionError,
-  isNetworkError,
-  setSessionToken,
-  setToken,
-} from '@/src/api/client';
-import { currentUser } from '@/src/constants/sampleData';
+import { clearToken, getCachedProfilePhoto, getToken, setSessionToken, setToken } from '@/src/api/client';
+import * as twoFAApi from '@/src/api/twoFA';
 import type { User } from '@/src/types';
 
 interface AuthState {
@@ -36,13 +29,22 @@ export function patchAuthUser(patch: Partial<User>) {
   }
 }
 
+/** Lets non-hook code (e.g. the invite-share helper) read the logged-in user
+ *  without subscribing to updates. Null before bootstrap resolves or when
+ *  signed out. */
+export function getCurrentAuthUser(): User | null {
+  return authState.user;
+}
+
 async function persistSession(token: string, sessionToken: string | undefined) {
   await setToken(token);
-  // Older backend builds may omit sessionToken; fall back to the JWT so the
+  // Fall back to the JWT if the backend omitted a session token, so the
   // X-Session-Token header is still present for the conflict check.
   await setSessionToken(sessionToken ?? token);
 }
 
+// Restores the session on app launch from a stored JWT. Real backend now: if
+// the token is invalid/expired the interceptor + this catch sign the user out.
 async function bootstrap() {
   const token = await getToken();
   if (!token) {
@@ -51,18 +53,18 @@ async function bootstrap() {
   }
   try {
     const user = await authApi.getMe();
-    setAuthState({ user, isAuthenticated: true, isLoading: false });
-  } catch (error) {
-    // DEMO FALLBACK: no backend is deployed yet for this build. A stored
-    // token with an unreachable API shouldn't strand the user on Splash, so
-    // fall back to the bundled sample profile. Remove this branch once
-    // auth/me is backed by a real server.
-    if (isNetworkError(error)) {
-      setAuthState({ user: currentUser, isAuthenticated: true, isLoading: false });
-    } else {
-      await clearToken();
-      setAuthState({ user: null, isAuthenticated: false, isLoading: false });
+    // If the server row has no photo yet (e.g. update in flight last session),
+    // fall back to the locally cached URL so the avatar survives a restart.
+    if (!user.profilePhotoUrl) {
+      const cached = await getCachedProfilePhoto();
+      if (cached) user.profilePhotoUrl = cached;
     }
+    setAuthState({ user, isAuthenticated: true, isLoading: false });
+  } catch {
+    // Unreachable backend or invalid token — return to the login screen rather
+    // than trusting a stale token.
+    await clearToken();
+    setAuthState({ user: null, isAuthenticated: false, isLoading: false });
   }
 }
 
@@ -82,42 +84,36 @@ export function useAuth() {
     };
   }, []);
 
+  /** Returns { requires2fa: true, tempToken } when the account has two-step
+   *  verification on — no session is persisted in that case, because the
+   *  backend hasn't issued one. The caller must route to the PIN screen and
+   *  finish via completeTwoFactor(). */
   const login = useCallback(async (email: string, password: string) => {
-    try {
-      const { token, sessionToken, user } = await authApi.login({ email, password });
-      await persistSession(token, sessionToken);
-      setAuthState({ user, isAuthenticated: true, isLoading: false });
-    } catch (error) {
-      // 423 ACTIVE_SESSION_EXISTS is the Login screen's decision to make
-      // (force-logout modal) — never swallow it with the demo fallback.
-      if (isActiveSessionError(error)) throw error;
-      if (isNetworkError(error)) {
-        // DEMO FALLBACK: allow exploring the app while no backend exists.
-        await persistSession('demo-token', 'demo-session');
-        setAuthState({ user: currentUser, isAuthenticated: true, isLoading: false });
-        return;
-      }
-      throw error;
-    }
+    // 423 ACTIVE_SESSION_EXISTS propagates so the Login screen can show its
+    // force-logout modal; all other errors surface to the caller too.
+    const result = await authApi.login({ email, password });
+    if (result.requires2fa) return result;
+    await persistSession(result.token, result.sessionToken);
+    setAuthState({ user: result.user, isAuthenticated: true, isLoading: false });
+    return result;
   }, []);
 
   /** Update 6 — invalidates the other device's session then retries login. */
   const forceLoginHere = useCallback(async (email: string, password: string) => {
-    try {
-      await authApi.forceLogout({ email, password });
-    } catch (error) {
-      if (!isNetworkError(error)) throw error; // DEMO FALLBACK: proceed offline
-    }
-    const { token, sessionToken, user } = await authApi
-      .login({ email, password })
-      .catch(async (error) => {
-        if (isNetworkError(error)) {
-          return { token: 'demo-token', sessionToken: 'demo-session', user: currentUser };
-        }
-        throw error;
-      });
+    await authApi.forceLogout({ email, password });
+    const result = await authApi.login({ email, password });
+    if (result.requires2fa) return result;
+    await persistSession(result.token, result.sessionToken);
+    setAuthState({ user: result.user, isAuthenticated: true, isLoading: false });
+    return result;
+  }, []);
+
+  /** Second factor: exchanges the PIN + temp token for the real session. */
+  const completeTwoFactor = useCallback(async (pin: string, tempToken: string) => {
+    const { token, sessionToken, user } = await twoFAApi.verifyTwoFAPin(pin, tempToken);
     await persistSession(token, sessionToken);
     setAuthState({ user, isAuthenticated: true, isLoading: false });
+    return user;
   }, []);
 
   const register = useCallback(
@@ -125,29 +121,9 @@ export function useAuth() {
       basicDetails: authApi.RegisterBasicDetails,
       identity: authApi.RegisterIdentityPayload,
     ) => {
-      try {
-        const { token, sessionToken, user } = await authApi.register(basicDetails, identity);
-        await persistSession(token, sessionToken);
-        setAuthState({ user, isAuthenticated: true, isLoading: false });
-      } catch (error) {
-        if (isNetworkError(error)) {
-          await persistSession('demo-token', 'demo-session');
-          setAuthState({
-            user: {
-              ...currentUser,
-              ...basicDetails,
-              id: 'u1',
-              idVerified: false,
-              idSubmitted: true, // documents were captured + uploaded this session
-              tcAcceptedAt: new Date().toISOString(),
-            },
-            isAuthenticated: true,
-            isLoading: false,
-          });
-          return;
-        }
-        throw error;
-      }
+      const { token, sessionToken, user } = await authApi.register(basicDetails, identity);
+      await persistSession(token, sessionToken);
+      setAuthState({ user, isAuthenticated: true, isLoading: false });
     },
     [],
   );
@@ -159,5 +135,5 @@ export function useAuth() {
     setAuthState({ user: null, isAuthenticated: false, isLoading: false });
   }, []);
 
-  return { ...state, login, forceLoginHere, register, logout };
+  return { ...state, login, forceLoginHere, completeTwoFactor, register, logout };
 }

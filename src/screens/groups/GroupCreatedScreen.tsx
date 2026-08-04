@@ -30,7 +30,7 @@ export default function GroupCreatedScreen() {
 
   const shareInvite = async () => {
     await Share.share({
-      message: `I invited you to join ${groupName} on SusuTrack! Code: ${inviteCode} Link: ${INVITE_WEB_BASE}/${inviteCode} Download SusuTrack to join.`,
+      message: `I invited you to join ${groupName} on SusuBox! Code: ${inviteCode} Link: ${INVITE_WEB_BASE}/${inviteCode} Download SusuBox to join.`,
     }).catch(() => undefined);
   };
 

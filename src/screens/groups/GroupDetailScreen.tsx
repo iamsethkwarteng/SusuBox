@@ -9,12 +9,15 @@ import { shareGroupInvite } from '@/src/components/GroupCard';
 import IDVerifiedBadge from '@/src/components/IDVerifiedBadge';
 import MemberRow from '@/src/components/MemberRow';
 import ReliabilityBar from '@/src/components/ReliabilityBar';
+import ErrorState from '@/src/components/ErrorState';
 import { MemberRowSkeleton } from '@/src/components/SkeletonLoader';
 import { showToast } from '@/src/components/Toast';
 import { Colors } from '@/src/constants/colors';
 import { isNetworkError } from '@/src/api/client';
+import { openCycle } from '@/src/api/cycles';
 import { approveJoinRequest, declineJoinRequest } from '@/src/api/groups';
-import { useGroup, useGroups } from '@/src/hooks/useGroups';
+import { useAuth } from '@/src/hooks/useAuth';
+import { useGroupDetail } from '@/src/hooks/useGroups';
 import MemberProfileSheet from '@/src/screens/groups/MemberProfileSheet';
 import type { ContributionStatus, GroupMember, JoinRequest } from '@/src/types';
 import { formatCurrency } from '@/src/utils/formatCurrency';
@@ -22,6 +25,23 @@ import { formatDate } from '@/src/utils/formatDate';
 
 type Tab = 'current' | 'rotation' | 'history' | 'requests';
 type StatusFilter = ContributionStatus | 'all';
+
+// A pending requester has no membership row yet, so shape their known details
+// into the GroupMember the profile sheet renders. Only real values are used —
+// the zeros are accurate (a non-member has no debts or streak in this group).
+function requestAsMember(request: JoinRequest): GroupMember {
+  return {
+    id: request.id,
+    userId: request.userId,
+    name: request.name,
+    role: 'member',
+    status: 'pending',
+    progressPct: 0,
+    reliabilityScore: request.reliabilityScore ?? 0,
+    penaltyDebt: 0,
+    streak: 0,
+  };
+}
 
 const FILTER_LABELS: Record<StatusFilter, string> = {
   all: 'All members',
@@ -32,16 +52,19 @@ const FILTER_LABELS: Record<StatusFilter, string> = {
 
 export default function GroupDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { isLoading } = useGroups();
-  const group = useGroup(id);
+  const { group, isLoading, error, refresh } = useGroupDetail(id);
+  const { user } = useAuth();
+  const currentUserId = user?.id;
   const [tab, setTab] = useState<Tab>('current');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [selectedMember, setSelectedMember] = useState<GroupMember | null>(null);
-  // Local mirror of pending requests so approve/decline update the UI
-  // instantly; refreshed from the group whenever it loads.
+  // Separate slot for a pending requester (read-only — they're not a member yet).
+  const [pendingRequestMember, setPendingRequestMember] = useState<GroupMember | null>(null);
+  // Local mirror of pending requests so the list reflects the server after an
+  // approve/decline refresh (never a synthetic, unsaved local row).
   const [requests, setRequests] = useState<JoinRequest[]>([]);
-  const [approvedMembers, setApprovedMembers] = useState<GroupMember[]>([]);
   const [removedIds, setRemovedIds] = useState<string[]>([]);
+  const [openingCycle, setOpeningCycle] = useState(false);
 
   useEffect(() => {
     if (group) setRequests(group.pendingRequests);
@@ -57,17 +80,31 @@ export default function GroupDetailScreen() {
           <Text style={styles.headerTitle}>Group</Text>
           <View style={{ width: 24 }} />
         </View>
-        <View style={{ padding: 20, gap: 12 }}>
-          <MemberRowSkeleton />
-          <MemberRowSkeleton />
-          <MemberRowSkeleton />
-        </View>
+        {error ? (
+          <ErrorState message={error} onRetry={refresh} />
+        ) : (
+          <View style={{ padding: 20, gap: 12 }}>
+            <MemberRowSkeleton />
+            <MemberRowSkeleton />
+            <MemberRowSkeleton />
+          </View>
+        )}
       </SafeAreaView>
     );
   }
 
   const isAdmin = group.role === 'organizer';
   const lateMember = group.members.find((m) => m.status === 'late' && !m.removed);
+  const recipientMember = group.members.find((m) => m.userId === group.currentRecipientId);
+
+  // Single rule for every avatar: my own → Profile, anyone else → their sheet.
+  const openMemberProfile = (member: GroupMember) => {
+    if (member.userId === currentUserId) {
+      router.push('/(tabs)/profile');
+      return;
+    }
+    setSelectedMember(member);
+  };
   const lateAmount = lateMember
     ? Math.round(group.contributionAmount * (1 - lateMember.progressPct / 100)) + lateMember.penaltyDebt
     : 0;
@@ -78,6 +115,35 @@ export default function GroupDetailScreen() {
       return;
     }
     setTab(next);
+  };
+
+  // Admin opens the next payout cycle (backend picks the recipient by rotation
+  // position and computes the expected pot).
+  const handleOpenCycle = () => {
+    Alert.alert('Open the next cycle?', 'Members will be notified that contributions are due.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Open cycle',
+        onPress: async () => {
+          setOpeningCycle(true);
+          try {
+            await openCycle(group.id);
+            showToast('Cycle opened — members notified');
+            refresh();
+          } catch (err) {
+            if (isNetworkError(err)) showToast('You appear to be offline');
+            else {
+              const message =
+                (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+                'Could not open the cycle.';
+              showToast(message);
+            }
+          } finally {
+            setOpeningCycle(false);
+          }
+        },
+      },
+    ]);
   };
 
   const handleFilter = () => {
@@ -95,28 +161,20 @@ export default function GroupDetailScreen() {
     try {
       await approveJoinRequest(group.id, request.id);
     } catch (error) {
-      if (!isNetworkError(error)) {
-        showToast('Could not approve — try again');
-        return;
-      }
-      // DEMO FALLBACK: no backend — apply locally.
+      // Never fake an approval: if the server didn't record it, the member is
+      // still pending and the admin must be able to retry.
+      showToast(
+        isNetworkError(error)
+          ? 'Could not approve — check your connection and try again'
+          : 'Could not approve — try again',
+      );
+      return;
     }
-    setRequests((prev) => prev.filter((r) => r.id !== request.id));
-    // Approved member appears in the Current Cycle tab immediately.
-    setApprovedMembers((prev) => [
-      ...prev,
-      {
-        id: `approved-${request.id}`,
-        userId: request.userId,
-        name: request.name,
-        role: 'member',
-        status: 'pending',
-        progressPct: 0,
-        reliabilityScore: request.reliabilityScore ?? 50,
-        penaltyDebt: 0,
-        streak: 0,
-      },
-    ]);
+    // Real backend success — refetch so member count, rotation, and payout
+    // position all reflect the server's actual state instead of a synthetic
+    // local row (previously this only mutated local state and never called
+    // refresh(), leaving the screen stale until it was re-entered).
+    refresh();
     showToast('Member approved and added to group');
   };
 
@@ -124,12 +182,15 @@ export default function GroupDetailScreen() {
     try {
       await declineJoinRequest(group.id, request.id);
     } catch (error) {
-      if (!isNetworkError(error)) {
-        showToast('Could not decline — try again');
-        return;
-      }
+      // Same rule as approve — never fake the outcome locally.
+      showToast(
+        isNetworkError(error)
+          ? 'Could not decline — check your connection and try again'
+          : 'Could not decline — try again',
+      );
+      return;
     }
-    setRequests((prev) => prev.filter((r) => r.id !== request.id));
+    refresh();
     showToast(`${request.name} has been declined`);
   };
 
@@ -138,7 +199,7 @@ export default function GroupDetailScreen() {
     setSelectedMember(null);
   };
 
-  const allMembers = [...group.members, ...approvedMembers].map((m) =>
+  const allMembers = group.members.map((m) =>
     removedIds.includes(m.id) ? { ...m, removed: true } : m,
   );
   const visibleMembers =
@@ -212,8 +273,31 @@ export default function GroupDetailScreen() {
                 <Text style={styles.recipientLabel}>Current Recipient</Text>
                 <Text style={styles.recipientName}>{group.currentRecipientName}</Text>
               </View>
-              <AvatarInitials name={group.currentRecipientName} size={48} />
+              {/* Recipient avatar → their profile (own avatar → Profile tab). */}
+              <AvatarInitials
+                name={group.currentRecipientName}
+                photoUrl={recipientMember?.avatarUrl}
+                size={48}
+                onPress={recipientMember ? () => openMemberProfile(recipientMember) : undefined}
+              />
             </View>
+
+            {/* Reports opens a separate stack screen (not a tab) — it is a
+                group-scoped report, so it carries the groupId and groupName. */}
+            <TouchableOpacity
+              style={styles.reportsButton}
+              activeOpacity={0.85}
+              onPress={() =>
+                router.push({
+                  pathname: '/group/[id]/reports',
+                  params: { id: group.id, groupName: group.name },
+                })
+              }
+            >
+              <MaterialCommunityIcons name="chart-bar" size={18} color={Colors.primary} />
+              <Text style={styles.reportsLabel}>View Reports</Text>
+              <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.primary} />
+            </TouchableOpacity>
 
             <View style={styles.tabRow}>
               {tabs.map((t) => (
@@ -275,7 +359,13 @@ export default function GroupDetailScreen() {
                   requests.map((request) => (
                     <View key={request.id} style={styles.requestCard}>
                       <View style={styles.requestTop}>
-                        <AvatarInitials name={request.name} size={42} />
+                        {/* Requester isn't a member yet, so the sheet shows a
+                            read-only profile (isAdmin=false hides Remove). */}
+                        <AvatarInitials
+                          name={request.name}
+                          size={42}
+                          onPress={() => setPendingRequestMember(requestAsMember(request))}
+                        />
                         <View style={{ flex: 1, gap: 4 }}>
                           <View style={styles.requestNameRow}>
                             <Text style={styles.requestName}>{request.name}</Text>
@@ -284,7 +374,7 @@ export default function GroupDetailScreen() {
                           {request.reliabilityScore !== undefined ? (
                             <ReliabilityBar score={request.reliabilityScore} />
                           ) : (
-                            <Text style={styles.requestNew}>New to SusuTrack</Text>
+                            <Text style={styles.requestNew}>New to SusuBox</Text>
                           )}
                           <Text style={styles.requestDate}>Requested {formatDate(request.requestedAt)}</Text>
                         </View>
@@ -316,7 +406,7 @@ export default function GroupDetailScreen() {
         }
         renderItem={({ item }) => (
           <View style={{ paddingHorizontal: 20 }}>
-            <MemberRow member={item} onPress={item.removed ? undefined : setSelectedMember} />
+            <MemberRow member={item} onPress={item.removed ? undefined : openMemberProfile} />
           </View>
         )}
         contentContainerStyle={{ paddingBottom: 120 }}
@@ -330,14 +420,41 @@ export default function GroupDetailScreen() {
         }
       />
 
-      <TouchableOpacity
-        style={styles.payButton}
-        activeOpacity={0.85}
-        onPress={() => router.push(`/payment?groupId=${group.id}`)}
-      >
-        <MaterialCommunityIcons name="cash-multiple" size={20} color={Colors.white} />
-        <Text style={styles.payButtonLabel}>Pay contribution</Text>
-      </TouchableOpacity>
+      {group.hasOpenCycle ? (
+        <TouchableOpacity
+          style={styles.payButton}
+          activeOpacity={0.85}
+          onPress={() => router.push(`/payment?groupId=${group.id}`)}
+        >
+          <MaterialCommunityIcons name="cash-multiple" size={20} color={Colors.white} />
+          <Text style={styles.payButtonLabel}>Pay contribution</Text>
+        </TouchableOpacity>
+      ) : isAdmin ? (
+        // No open cycle yet — admin can start the next one.
+        <TouchableOpacity
+          style={[styles.payButton, styles.openCycleButton]}
+          activeOpacity={0.85}
+          onPress={handleOpenCycle}
+          disabled={openingCycle}
+        >
+          <MaterialCommunityIcons name="play-circle-outline" size={20} color={Colors.white} />
+          <Text style={styles.payButtonLabel}>{openingCycle ? 'Opening…' : 'Open next cycle'}</Text>
+        </TouchableOpacity>
+      ) : (
+        <View style={[styles.payButton, styles.noCycleNote]}>
+          <MaterialCommunityIcons name="clock-outline" size={18} color={Colors.textSecondary} />
+          <Text style={styles.noCycleText}>Waiting for the admin to open the next cycle</Text>
+        </View>
+      )}
+
+      {/* Read-only sheet for a pending requester (no Remove — not a member). */}
+      {pendingRequestMember ? (
+        <MemberProfileSheet
+          member={pendingRequestMember}
+          onClose={() => setPendingRequestMember(null)}
+          isAdmin={false}
+        />
+      ) : null}
 
       <MemberProfileSheet
         member={selectedMember}
@@ -409,6 +526,20 @@ const styles = StyleSheet.create({
   },
   recipientLabel: { color: 'rgba(255,255,255,0.75)', fontSize: 12 },
   recipientName: { color: Colors.white, fontSize: 18, fontWeight: '800', marginTop: 4 },
+  reportsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginHorizontal: 20,
+    marginBottom: 20,
+    borderWidth: 1.5,
+    borderColor: Colors.primary,
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    minHeight: 48,
+  },
+  reportsLabel: { flex: 1, color: Colors.primary, fontSize: 15, fontWeight: '700' },
   tabRow: {
     flexDirection: 'row',
     paddingHorizontal: 20,
@@ -514,4 +645,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 3 },
   },
   payButtonLabel: { color: Colors.white, fontSize: 16, fontWeight: '700' },
+  openCycleButton: { backgroundColor: Colors.primary },
+  noCycleNote: { backgroundColor: Colors.divider, elevation: 0, shadowOpacity: 0 },
+  noCycleText: { color: Colors.textSecondary, fontSize: 13, fontWeight: '600' },
 });

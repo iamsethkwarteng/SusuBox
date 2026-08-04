@@ -1,11 +1,16 @@
 import React, { useMemo } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { Colors } from '@/src/constants/colors';
 
 interface AvatarInitialsProps {
   name: string;
+  /** Cloudinary profile photo; falls back to coloured initials when absent. */
+  photoUrl?: string | null;
   size?: number;
+  /** When provided the avatar becomes tappable (own avatar → Profile, another
+   *  member's → their profile sheet). Omit for decorative avatars. */
+  onPress?: () => void;
 }
 
 const PALETTE = [Colors.primary, Colors.success, Colors.accent, Colors.warning, Colors.primaryDark];
@@ -23,19 +28,35 @@ function colorFor(name: string): string {
   return PALETTE[Math.abs(hash) % PALETTE.length];
 }
 
-export default function AvatarInitials({ name, size = 44 }: AvatarInitialsProps) {
+export default function AvatarInitials({ name, photoUrl, size = 44, onPress }: AvatarInitialsProps) {
   const initials = useMemo(() => initialsOf(name), [name]);
   const bg = useMemo(() => colorFor(name), [name]);
 
-  return (
-    <View
-      style={[
-        styles.circle,
-        { width: size, height: size, borderRadius: size / 2, backgroundColor: bg },
-      ]}
-    >
+  const circle = { width: size, height: size, borderRadius: size / 2 };
+
+  const inner = photoUrl ? (
+    <Image source={{ uri: photoUrl }} style={[circle, { backgroundColor: Colors.divider }]} />
+  ) : (
+    <View style={[styles.circle, circle, { backgroundColor: bg }]}>
       <Text style={[styles.text, { fontSize: size * 0.38 }]}>{initials}</Text>
     </View>
+  );
+
+  // Tappable only when a handler is supplied — a plain View otherwise, so
+  // decorative avatars don't advertise an interaction that does nothing.
+  if (!onPress) return inner;
+
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.7}
+      // hitSlop keeps small (32px) header avatars within a comfortable tap target.
+      hitSlop={size < 48 ? 8 : 0}
+      accessibilityRole="button"
+      accessibilityLabel={`View ${name}'s profile`}
+    >
+      {inner}
+    </TouchableOpacity>
   );
 }
 

@@ -1,13 +1,25 @@
 import axios, { AxiosError } from 'axios';
+import { router } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
 
 import { API_BASE_URL, API_TIMEOUT_MS } from '@/src/constants/api';
 
 // JWT + session token never touch AsyncStorage — expo-secure-store backs onto
 // Keychain (iOS) / Keystore (Android), the correct place for auth material.
-export const TOKEN_KEY = 'susutrack_jwt';
-export const SESSION_TOKEN_KEY = 'susutrack_session_token';
-export const SESSION_STARTED_AT_KEY = 'susutrack_session_started_at';
+export const TOKEN_KEY = 'susubox_jwt';
+export const SESSION_TOKEN_KEY = 'susubox_session_token';
+export const SESSION_STARTED_AT_KEY = 'susubox_session_started_at';
+export const PROFILE_PHOTO_KEY = 'susubox_profile_photo';
+
+// Caches the latest profile-photo URL so the avatar shows instantly on the next
+// app launch, before GET /auth/me returns. Cleared on logout with the tokens.
+export async function cacheProfilePhoto(url: string): Promise<void> {
+  await SecureStore.setItemAsync(PROFILE_PHOTO_KEY, url);
+}
+
+export async function getCachedProfilePhoto(): Promise<string | null> {
+  return SecureStore.getItemAsync(PROFILE_PHOTO_KEY);
+}
 
 export async function getToken(): Promise<string | null> {
   return SecureStore.getItemAsync(TOKEN_KEY);
@@ -37,6 +49,7 @@ export async function clearToken(): Promise<void> {
   await SecureStore.deleteItemAsync(TOKEN_KEY);
   await SecureStore.deleteItemAsync(SESSION_TOKEN_KEY);
   await SecureStore.deleteItemAsync(SESSION_STARTED_AT_KEY);
+  await SecureStore.deleteItemAsync(PROFILE_PHOTO_KEY);
 }
 
 // --- Session conflict channel (Update 6) -----------------------------------
@@ -80,9 +93,22 @@ apiClient.interceptors.response.use(
     conflictNotified = false; // a successful call means the session is valid again
     return response;
   },
-  async (error: AxiosError<{ message?: string }>) => {
+  async (error: AxiosError<{ message?: string; error?: string; email?: string }>) => {
     const status = error.response?.status;
     const message = error.response?.data?.message;
+
+    // Any protected route hit by an unverified account: bounce to the
+    // verification screen rather than surfacing a bare 403 on some deep screen.
+    // Guarded so a 403 arriving before the navigator mounts can't crash the app.
+    if (status === 403 && error.response?.data?.error === 'EMAIL_NOT_VERIFIED') {
+      const email = error.response.data.email ?? '';
+      try {
+        router.replace({ pathname: '/(auth)/verify-email', params: { email } });
+      } catch {
+        // Navigator not ready yet — SplashScreen's own check will route instead.
+      }
+      return Promise.reject(error);
+    }
 
     if (status === 409 && message === 'SESSION_CONFLICT') {
       // Another device logged in — sign this one out exactly once.

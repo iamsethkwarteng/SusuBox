@@ -16,7 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { isActiveSessionError } from '@/src/api/client';
 import { Colors } from '@/src/constants/colors';
-import { useAuth } from '@/src/hooks/useAuth';
+import { getCurrentAuthUser, useAuth } from '@/src/hooks/useAuth';
 import { getPendingInvite, type PendingInvite } from '@/src/utils/pendingInvite';
 
 export default function LoginScreen() {
@@ -38,6 +38,17 @@ export default function LoginScreen() {
   const canSubmit = email.trim().length > 3 && password.length >= 4 && !submitting;
 
   const navigateAfterAuth = () => {
+    // Registered but never opened the verification link: nothing past this
+    // screen would work for them, so send them back to finish verifying. Read
+    // the store directly — the hook's own state hasn't re-rendered yet here.
+    const authed = getCurrentAuthUser();
+    if (authed && authed.emailVerified === false) {
+      router.replace({
+        pathname: '/(auth)/verify-email',
+        params: { email: authed.email, name: authed.name },
+      });
+      return;
+    }
     // A parked invite wins over the dashboard: resume the join flow with the
     // code pre-filled so the user never re-types it.
     if (pendingInvite) {
@@ -52,7 +63,16 @@ export default function LoginScreen() {
     setError(null);
     setSubmitting(true);
     try {
-      await login(email.trim(), password);
+      const result = await login(email.trim(), password);
+      // Two-step verification on: no session was created, so the PIN screen
+      // owns the rest of the login.
+      if (result.requires2fa) {
+        router.push({
+          pathname: '/(auth)/two-fa',
+          params: { tempToken: result.tempToken, email: email.trim() },
+        });
+        return;
+      }
       navigateAfterAuth();
     } catch (err) {
       if (isActiveSessionError(err)) {
@@ -69,7 +89,14 @@ export default function LoginScreen() {
     setSessionModalVisible(false);
     setSubmitting(true);
     try {
-      await forceLoginHere(email.trim(), password);
+      const result = await forceLoginHere(email.trim(), password);
+      if (result.requires2fa) {
+        router.push({
+          pathname: '/(auth)/two-fa',
+          params: { tempToken: result.tempToken, email: email.trim() },
+        });
+        return;
+      }
       navigateAfterAuth();
     } catch {
       setError('Could not sign in. Please try again.');
@@ -93,7 +120,7 @@ export default function LoginScreen() {
                 Log in to join {pendingInvite.groupName ?? 'your group'}
               </Text>
               <Link href="/(auth)/register" replace>
-                <Text style={styles.inviteRegisterLink}>New to SusuTrack? Register first</Text>
+                <Text style={styles.inviteRegisterLink}>New to SusuBox? Register first</Text>
               </Link>
             </View>
           </View>

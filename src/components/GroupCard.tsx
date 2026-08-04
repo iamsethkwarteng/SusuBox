@@ -4,7 +4,7 @@ import { Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { Colors } from '@/src/constants/colors';
 import { INVITE_WEB_BASE } from '@/src/constants/api';
-import { currentUser } from '@/src/constants/sampleData';
+import { getCurrentAuthUser } from '@/src/hooks/useAuth';
 import type { Group } from '@/src/types';
 import { formatCurrency } from '@/src/utils/formatCurrency';
 
@@ -24,8 +24,12 @@ interface GroupCardProps {
  * opens; no extra native module needed, so it keeps working inside Expo Go).
  */
 export async function shareGroupInvite(group: Group): Promise<void> {
+  // Was previously hardcoded to the sampleData demo user, so every "Share
+  // Invite" message said "Kofi Mensah invited you..." regardless of who
+  // actually shared it. Read the real signed-in user instead.
+  const inviterName = getCurrentAuthUser()?.name ?? 'A member';
   await Share.share({
-    message: `${currentUser.name} invited you to join ${group.name} on SusuTrack! Code: ${group.inviteCode} Link: ${INVITE_WEB_BASE}/${group.inviteCode} Download SusuTrack to get started.`,
+    message: `${inviterName} invited you to join ${group.name} on SusuBox! Code: ${group.inviteCode} Link: ${INVITE_WEB_BASE}/${group.inviteCode} Download SusuBox to get started.`,
   }).catch(() => undefined);
 }
 

@@ -1,19 +1,14 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import React, { useCallback, useState } from 'react';
+import React, { useState } from 'react';
 import { FlatList, RefreshControl, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import AvatarInitials from '@/src/components/AvatarInitials';
-import { showToast } from '@/src/components/Toast';
+import { SkeletonLoader } from '@/src/components/SkeletonLoader';
 import { Colors } from '@/src/constants/colors';
-import { isNetworkError } from '@/src/api/client';
-import {
-  fetchNotifications,
-  markAllNotificationsRead,
-  markNotificationRead,
-} from '@/src/api/notifications';
-import { currentUser, notifications as sampleNotifications } from '@/src/constants/sampleData';
+import { useAuth } from '@/src/hooks/useAuth';
+import { useNotifications } from '@/src/hooks/useNotifications';
 import type { AppNotification, NotificationType } from '@/src/types';
 
 type FilterTab = 'All' | 'Payments' | 'Reminders' | 'Alerts';
@@ -37,58 +32,43 @@ function matchesFilter(notification: AppNotification, filter: FilterTab): boolea
 }
 
 export default function NotificationsScreen() {
+  const { user } = useAuth();
   const [filter, setFilter] = useState<FilterTab>('All');
-  const [items, setItems] = useState<AppNotification[]>(sampleNotifications);
-  const [refreshing, setRefreshing] = useState(false);
+  const {
+    items,
+    unreadCount,
+    isLoading,
+    error,
+    loaded,
+    refresh,
+    markRead,
+    markAllRead,
+  } = useNotifications();
 
   const visible = items.filter((n) => matchesFilter(n, filter));
-  const unreadCount = items.filter((n) => !n.read).length;
 
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    try {
-      const fresh = await fetchNotifications();
-      setItems(fresh);
-    } catch (error) {
-      if (!isNetworkError(error)) showToast('Could not refresh — check your connection');
-      // DEMO FALLBACK / offline: keep current list.
-    } finally {
-      setRefreshing(false);
-    }
-  }, []);
-
-  // Optimistic read: flip local state instantly, sync in the background, and
-  // revert + toast if the server rejects.
-  const markRead = useCallback(
-    async (id: string) => {
-      const target = items.find((n) => n.id === id);
-      if (!target || target.read) return;
-      setItems((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
-      try {
-        await markNotificationRead(id);
-      } catch (error) {
-        if (!isNetworkError(error)) {
-          setItems((prev) => prev.map((n) => (n.id === id ? { ...n, read: false } : n)));
-          showToast('Could not update — check your connection');
-        }
-      }
-    },
-    [items],
-  );
-
-  const markAllRead = useCallback(async () => {
-    if (unreadCount === 0) return;
-    const snapshot = items;
-    setItems((prev) => prev.map((n) => ({ ...n, read: true })));
-    try {
-      await markAllNotificationsRead();
-    } catch (error) {
-      if (!isNetworkError(error)) {
-        setItems(snapshot);
-        showToast('Could not update — check your connection');
-      }
-    }
-  }, [items, unreadCount]);
+  const renderRow = (item: AppNotification) => {
+    const meta = TYPE_META[item.type];
+    return (
+      <TouchableOpacity
+        style={[styles.row, !item.read && styles.rowUnread]}
+        activeOpacity={0.7}
+        onPress={() => markRead(item.id)}
+      >
+        <View style={[styles.icon, { backgroundColor: meta.bg }]}>
+          <MaterialCommunityIcons name={meta.icon} size={20} color={meta.fg} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.rowTitle}>{item.title}</Text>
+          <Text style={styles.rowBody} numberOfLines={2}>{item.body}</Text>
+        </View>
+        <View style={styles.rowMeta}>
+          <Text style={styles.rowTime}>{item.timestamp}</Text>
+          {!item.read ? <View style={styles.unreadDot} /> : null}
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>
@@ -102,7 +82,13 @@ export default function NotificationsScreen() {
             <Text style={styles.markAllLabel}>Mark all read</Text>
           </TouchableOpacity>
         ) : (
-          <AvatarInitials name={currentUser.name} size={32} />
+          // Own avatar → Profile tab.
+          <AvatarInitials
+            name={user?.name ?? 'Saver'}
+            photoUrl={user?.profilePhotoUrl}
+            size={32}
+            onPress={() => router.push('/(tabs)/profile')}
+          />
         )}
       </View>
 
@@ -118,40 +104,53 @@ export default function NotificationsScreen() {
         ))}
       </View>
 
-      <FlatList
-        data={visible}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={{ paddingBottom: 24 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
-        renderItem={({ item }) => {
-          const meta = TYPE_META[item.type];
-          return (
-            <TouchableOpacity
-              style={[styles.row, !item.read && styles.rowUnread]}
-              activeOpacity={0.7}
-              onPress={() => markRead(item.id)}
-            >
-              <View style={[styles.icon, { backgroundColor: meta.bg }]}>
-                <MaterialCommunityIcons name={meta.icon} size={20} color={meta.fg} />
+      {isLoading && !loaded ? (
+        // Loading skeleton — placeholder rows while the first fetch runs.
+        <View style={{ paddingHorizontal: 20 }}>
+          {[0, 1, 2, 3].map((i) => (
+            <View key={i} style={styles.skeletonRow}>
+              <SkeletonLoader width={40} height={40} borderRadius={20} />
+              <View style={{ flex: 1, gap: 8 }}>
+                <SkeletonLoader width="45%" height={13} />
+                <SkeletonLoader width="85%" height={10} />
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.rowTitle}>{item.title}</Text>
-                <Text style={styles.rowBody} numberOfLines={2}>{item.body}</Text>
-              </View>
-              <View style={styles.rowMeta}>
-                <Text style={styles.rowTime}>{item.timestamp}</Text>
-                {!item.read ? <View style={styles.unreadDot} /> : null}
-              </View>
-            </TouchableOpacity>
-          );
-        }}
-        ListEmptyComponent={
-          <View style={styles.emptyState}>
-            <MaterialCommunityIcons name="bell-off-outline" size={28} color={Colors.textMuted} />
-            <Text style={styles.emptyText}>No notifications in this category.</Text>
-          </View>
-        }
-      />
+            </View>
+          ))}
+        </View>
+      ) : error && items.length === 0 ? (
+        // Fetch failed and we have nothing to show — empty state + retry.
+        <View style={styles.emptyState}>
+          <MaterialCommunityIcons name="wifi-off" size={30} color={Colors.textMuted} />
+          <Text style={styles.emptyTitle}>Couldn&apos;t load notifications</Text>
+          <Text style={styles.emptySub}>Check your connection and try again.</Text>
+          <TouchableOpacity style={styles.retryButton} onPress={() => refresh()} activeOpacity={0.85}>
+            <Text style={styles.retryLabel}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      ) : items.length === 0 ? (
+        // Brand new user with no notifications yet.
+        <View style={styles.emptyState}>
+          <MaterialCommunityIcons name="bell-outline" size={30} color={Colors.textMuted} />
+          <Text style={styles.emptyTitle}>No notifications yet</Text>
+          <Text style={styles.emptySub}>
+            You will be notified about payments, group updates, and reminders here
+          </Text>
+        </View>
+      ) : (
+        <FlatList
+          data={visible}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={{ paddingBottom: 24 }}
+          refreshControl={<RefreshControl refreshing={isLoading} onRefresh={() => refresh()} tintColor={Colors.primary} />}
+          renderItem={({ item }) => renderRow(item)}
+          ListEmptyComponent={
+            <View style={styles.emptyState}>
+              <MaterialCommunityIcons name="bell-off-outline" size={28} color={Colors.textMuted} />
+              <Text style={styles.emptySub}>No notifications in this category.</Text>
+            </View>
+          }
+        />
+      )}
     </SafeAreaView>
   );
 }
@@ -196,6 +195,21 @@ const styles = StyleSheet.create({
   rowMeta: { alignItems: 'flex-end', gap: 6 },
   rowTime: { fontSize: 11, color: Colors.textMuted },
   unreadDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: Colors.primary },
-  emptyState: { alignItems: 'center', gap: 10, paddingTop: 60 },
-  emptyText: { color: Colors.textSecondary, fontSize: 13 },
+  skeletonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 16,
+  },
+  emptyState: { alignItems: 'center', gap: 6, paddingTop: 72, paddingHorizontal: 40 },
+  emptyTitle: { color: Colors.textPrimary, fontSize: 15, fontWeight: '700', marginTop: 6 },
+  emptySub: { color: Colors.textSecondary, fontSize: 13, textAlign: 'center', lineHeight: 18 },
+  retryButton: {
+    marginTop: 16,
+    backgroundColor: Colors.primary,
+    borderRadius: 12,
+    paddingHorizontal: 28,
+    paddingVertical: 11,
+  },
+  retryLabel: { color: Colors.white, fontSize: 14, fontWeight: '700' },
 });

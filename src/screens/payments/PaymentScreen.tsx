@@ -7,54 +7,83 @@ import { usePaystack } from 'react-native-paystack-webview';
 
 import AvatarInitials from '@/src/components/AvatarInitials';
 import { showToast } from '@/src/components/Toast';
+import { initializePayment, verifyPayment } from '@/src/api/contributions';
 import { Colors } from '@/src/constants/colors';
-import { currentUser } from '@/src/constants/sampleData';
-import { useGroup } from '@/src/hooks/useGroups';
+import { useAuth } from '@/src/hooks/useAuth';
+import { useGroupDetail } from '@/src/hooks/useGroups';
+import { calculatePaystackFee } from '@/src/utils/calculatePaystackFee';
 import { formatCurrency } from '@/src/utils/formatCurrency';
-import { sendEmail } from '@/src/utils/sendEmail';
 
 export default function PaymentScreen() {
   const { groupId } = useLocalSearchParams<{ groupId: string }>();
-  const group = useGroup(groupId);
+  const { user } = useAuth();
+  // Detail carries the open cycle's id, which the contribution must target.
+  const { group } = useGroupDetail(groupId);
   const { popup } = usePaystack();
   const [processing, setProcessing] = useState(false);
 
   if (!group) return null;
 
-  const handlePay = () => {
+  // Member pays the processing fee on top; the group receives the full amount.
+  const fee = calculatePaystackFee(group.contributionAmount);
+
+  const handlePay = async () => {
+    if (!group.currentCycleId) {
+      Alert.alert(
+        'No open cycle',
+        'There is no open cycle to contribute to yet. Ask your group admin to open one.',
+      );
+      return;
+    }
     setProcessing(true);
-    popup.checkout({
-      email: currentUser.email,
-      amount: group.contributionAmount,
-      metadata: { groupId: group.id, cycle: group.cycle, userId: currentUser.id },
-      onSuccess: (res) => {
-        setProcessing(false);
-        // Update 7 — after Paystack confirms, trigger the confirmation email
-        // in addition to the in-app + FCM notifications. BACKEND REQUIRED:
-        // the Paystack webhook is the source of truth; this client trigger is
-        // a fast-path so the user sees the email promptly on success.
-        sendEmail({
-          type: 'contribution_confirmed',
-          data: {
-            name: currentUser.name,
-            amount: group.contributionAmount,
-            groupName: group.name,
-            cycle: group.cycle,
-            reference: res?.reference ?? 'N/A',
-          },
-        }).then(({ sent }) => {
-          if (sent) showToast(`Confirmation email sent to ${currentUser.email}`);
-        });
-        Alert.alert('Payment successful', `Your contribution of ${formatCurrency(group.contributionAmount)} was confirmed.`, [
-          { text: 'Done', onPress: () => router.back() },
-        ]);
-      },
-      onCancel: () => setProcessing(false),
-      onError: () => {
-        setProcessing(false);
-        Alert.alert('Payment failed', 'Something went wrong processing your payment. Please try again.');
-      },
-    });
+    try {
+      // 1. Backend creates the pending transaction (with the fee breakdown) and
+      // returns the reference + the total to charge + the group's subaccount.
+      const { reference, amount, subaccountCode } = await initializePayment({
+        cycleId: group.currentCycleId,
+      });
+
+      // 2. Paystack SDK does the actual init + charge using that reference. The
+      // member is charged the TOTAL (contribution + fee); the split routes the
+      // contribution into the group's subaccount when one is configured.
+      popup.checkout({
+        email: user?.email ?? '',
+        amount, // total = contribution + fee
+        reference,
+        // The split routes the contribution into the group's subaccount. This
+        // library forwards `subaccount` (fee-bearer is configured on the
+        // subaccount itself, so no `bearer` param is needed or supported).
+        ...(subaccountCode ? { subaccount: subaccountCode } : {}),
+        metadata: { groupId: group.id, cycleId: group.currentCycleId, userId: user?.id },
+        onSuccess: async () => {
+          // 3. Record it now via verify (idempotent with the webhook), so the
+          // contribution lands even when the webhook can't reach a dev server.
+          try {
+            await verifyPayment(reference);
+          } catch {
+            showToast('Payment received — confirming shortly');
+          }
+          setProcessing(false);
+          Alert.alert(
+            'Payment successful',
+            // Record/confirm the CONTRIBUTION amount, not the total charged.
+            `${formatCurrency(group.contributionAmount)} contributed to ${group.name} ✓`,
+            [{ text: 'Done', onPress: () => router.back() }],
+          );
+        },
+        onCancel: () => setProcessing(false),
+        onError: () => {
+          setProcessing(false);
+          Alert.alert('Payment failed', 'Something went wrong processing your payment. Please try again.');
+        },
+      });
+    } catch (err) {
+      setProcessing(false);
+      const message =
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        'Could not start the payment. Please try again.';
+      Alert.alert('Payment unavailable', message);
+    }
   };
 
   return (
@@ -64,7 +93,13 @@ export default function PaymentScreen() {
           <MaterialCommunityIcons name="arrow-left" size={24} color={Colors.primary} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Pay contribution</Text>
-        <AvatarInitials name={currentUser.name} size={32} />
+        {/* Own avatar → Profile tab. */}
+        <AvatarInitials
+          name={user?.name ?? 'You'}
+          photoUrl={user?.profilePhotoUrl}
+          size={32}
+          onPress={() => router.push('/(tabs)/profile')}
+        />
       </View>
 
       <View style={styles.container}>
@@ -75,23 +110,33 @@ export default function PaymentScreen() {
         <View style={styles.secureNote}>
           <MaterialCommunityIcons name="lock-outline" size={18} color={Colors.primary} />
           <Text style={styles.secureText}>
-            Payment confirmed automatically. Your funds are secured by encrypted bank-grade protocols and held
-            in a regulated Susu trust account.
+            Payment confirmed automatically. Your contribution goes straight into {group.name}&apos;s own
+            secure Paystack account and is held there until the payout is confirmed.
           </Text>
         </View>
 
+        {/* Fee breakdown — the member pays the processing fee on top. */}
         <View style={styles.detailCard}>
+          <Text style={styles.breakdownTitle}>Payment breakdown</Text>
           <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>Recipient Group</Text>
-            <Text style={styles.detailValue}>{group.name}</Text>
+            <Text style={styles.detailLabel}>Contribution amount</Text>
+            <Text style={styles.detailValue}>{fee.contribution_display}</Text>
           </View>
           <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>Current Recipient</Text>
-            <Text style={styles.detailValue}>{group.currentRecipientName}</Text>
+            <Text style={styles.detailLabel}>Processing fee</Text>
+            <Text style={styles.detailValue}>{fee.fee_display}</Text>
           </View>
+          <View style={styles.breakdownDivider} />
           <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>Payment channel</Text>
-            <Text style={styles.detailValue}>Paystack — MoMo / Card</Text>
+            <Text style={styles.totalLabel}>Total to pay</Text>
+            <Text style={styles.totalValue}>{fee.total_display}</Text>
+          </View>
+          <View style={styles.feeNote}>
+            <MaterialCommunityIcons name="information-outline" size={15} color={Colors.primary} />
+            <Text style={styles.feeNoteText}>
+              Your group receives {fee.contribution_display} in full. The fee covers secure mobile money
+              processing.
+            </Text>
           </View>
         </View>
       </View>
@@ -101,9 +146,12 @@ export default function PaymentScreen() {
           {processing ? (
             <ActivityIndicator color={Colors.white} />
           ) : (
-            <Text style={styles.payLabel}>Pay {formatCurrency(group.contributionAmount)}</Text>
+            <Text style={styles.payLabel}>Pay {fee.total_display} via MoMo</Text>
           )}
         </TouchableOpacity>
+        <Text style={styles.directNote}>
+          Your payment goes directly into the group&apos;s secure account. SusuBox does not hold your money.
+        </Text>
         <View style={styles.securedByRow}>
           <MaterialCommunityIcons name="lock-outline" size={12} color={Colors.textMuted} />
           <Text style={styles.securedByText}>SECURED BY PAYSTACK</Text>
@@ -149,9 +197,16 @@ const styles = StyleSheet.create({
     marginTop: 20,
     gap: 14,
   },
-  detailRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  detailRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   detailLabel: { fontSize: 13, color: Colors.textSecondary },
   detailValue: { fontSize: 13, fontWeight: '700', color: Colors.textPrimary },
+  breakdownTitle: { fontSize: 13, fontWeight: '800', color: Colors.textPrimary, marginBottom: 2 },
+  breakdownDivider: { height: 1, backgroundColor: Colors.divider, marginVertical: 2 },
+  totalLabel: { fontSize: 14, fontWeight: '800', color: Colors.textPrimary },
+  totalValue: { fontSize: 16, fontWeight: '800', color: Colors.primary },
+  feeNote: { flexDirection: 'row', gap: 8, marginTop: 6 },
+  feeNoteText: { flex: 1, fontSize: 11.5, color: Colors.textSecondary, lineHeight: 16 },
+  directNote: { fontSize: 11, color: Colors.textMuted, textAlign: 'center', lineHeight: 16, paddingHorizontal: 8 },
   footer: { padding: 24, alignItems: 'center', gap: 10 },
   payButton: {
     width: '100%',

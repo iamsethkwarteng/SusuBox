@@ -20,7 +20,14 @@ export default function MemberRow({ member, onPress }: MemberRowProps) {
       activeOpacity={0.7}
       onPress={() => onPress?.(member)}
     >
-      <AvatarInitials name={member.name} size={44} />
+      {/* The whole row opens the member sheet; the avatar does too, with its
+          own tap feedback, so tapping the face behaves as users expect. */}
+      <AvatarInitials
+        name={member.name}
+        photoUrl={member.avatarUrl}
+        size={44}
+        onPress={onPress ? () => onPress(member) : undefined}
+      />
       <View style={styles.middle}>
         <View style={styles.nameRow}>
           <Text style={[styles.name, member.removed && styles.nameRemoved]} numberOfLines={1}>

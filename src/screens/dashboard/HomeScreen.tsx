@@ -5,21 +5,26 @@ import { FlatList, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacit
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import AvatarInitials from '@/src/components/AvatarInitials';
+import EmptyState from '@/src/components/EmptyState';
+import ErrorState from '@/src/components/ErrorState';
 import GroupCard from '@/src/components/GroupCard';
 import SessionBanner from '@/src/components/SessionBanner';
-import { GroupCardSkeleton } from '@/src/components/SkeletonLoader';
+import { GroupCardSkeleton, SkeletonLoader } from '@/src/components/SkeletonLoader';
 import { Colors } from '@/src/constants/colors';
-import { notifications, recentActivity } from '@/src/constants/sampleData';
 import { useAuth } from '@/src/hooks/useAuth';
 import { useGroups } from '@/src/hooks/useGroups';
-import type { ActivityType, Group } from '@/src/types';
+import { useNotifications } from '@/src/hooks/useNotifications';
+import type { Group, NotificationType } from '@/src/types';
 import { formatCurrency } from '@/src/utils/formatCurrency';
 
-const ACTIVITY_ICONS: Record<ActivityType, { icon: keyof typeof MaterialCommunityIcons.glyphMap; bg: string; fg: string }> = {
+// Icon + colour per notification type, used to colour each recent-activity row.
+const ACTIVITY_ICONS: Record<NotificationType, { icon: keyof typeof MaterialCommunityIcons.glyphMap; bg: string; fg: string }> = {
   payment: { icon: 'cash-check', bg: Colors.successLight, fg: Colors.success },
-  member_joined: { icon: 'account-plus', bg: Colors.accentLight, fg: Colors.accent },
-  payout_started: { icon: 'bullhorn-outline', bg: Colors.primaryLight, fg: Colors.primary },
-  alert: { icon: 'alert-circle-outline', bg: Colors.dangerLight, fg: Colors.danger },
+  payout: { icon: 'star-circle-outline', bg: Colors.accentLight, fg: Colors.accent },
+  reminder: { icon: 'bell-ring-outline', bg: Colors.primaryLight, fg: Colors.primary },
+  warning: { icon: 'alert', bg: Colors.warningLight, fg: Colors.warning },
+  info: { icon: 'information-outline', bg: Colors.primaryLight, fg: Colors.primary },
+  overdue: { icon: 'alert-circle-outline', bg: Colors.dangerLight, fg: Colors.danger },
 };
 
 function greeting(): string {
@@ -31,16 +36,35 @@ function greeting(): string {
 
 export default function HomeScreen() {
   const { user } = useAuth();
-  const { groups, isLoading, refresh } = useGroups();
+  const { groups, isLoading, error: groupsError, refresh } = useGroups();
+  const {
+    items: notifications,
+    unreadCount,
+    isLoading: notificationsLoading,
+    loaded: notificationsLoaded,
+    refresh: refreshNotifications,
+  } = useNotifications();
 
+  // The 5 most recent items double as the dashboard's activity feed.
+  const recentActivity = notifications.slice(0, 5);
+
+  // All derived from real API groups. A brand new user has [] → GHS 0.00.
   const totalSavings = useMemo(() => groups.reduce((sum, g) => sum + g.collected, 0), [groups]);
-  const unreadCount = notifications.filter((n) => !n.read).length;
 
+  // Only groups with an actual open cycle have a contribution due.
   const nextContributionGroup = useMemo(
-    () => [...groups].sort((a, b) => a.nextContributionInHours - b.nextContributionInHours)[0],
+    () =>
+      groups
+        .filter((g) => g.hasOpenCycle)
+        .sort((a, b) => a.nextContributionInHours - b.nextContributionInHours)[0],
     [groups],
   );
-  const payoutGroup = groups[0];
+
+  // Only a group with a real named recipient has a scheduled payout.
+  const payoutGroup = useMemo(
+    () => groups.find((g) => g.hasOpenCycle && !!g.currentRecipientName),
+    [groups],
+  );
 
   const openGroup = (group: Group) => router.push(`/group/${group.id}`);
 
@@ -51,11 +75,26 @@ export default function HomeScreen() {
     <SafeAreaView style={styles.screen} edges={['top']}>
       <ScrollView
         contentContainerStyle={styles.container}
-        refreshControl={<RefreshControl refreshing={isLoading} onRefresh={refresh} tintColor={Colors.primary} />}
+        refreshControl={
+          <RefreshControl
+            refreshing={isLoading}
+            onRefresh={() => {
+              refresh();
+              refreshNotifications();
+            }}
+            tintColor={Colors.primary}
+          />
+        }
       >
         <View style={styles.headerRow}>
           <View style={styles.headerLeft}>
-            <AvatarInitials name={initialsSource} size={40} />
+            {/* Own avatar → Profile tab. */}
+            <AvatarInitials
+              name={initialsSource}
+              photoUrl={user?.profilePhotoUrl}
+              size={40}
+              onPress={() => router.push('/(tabs)/profile')}
+            />
             <Text style={styles.greeting}>
               {greeting()}, {firstName}
             </Text>
@@ -83,19 +122,29 @@ export default function HomeScreen() {
         <View style={styles.statRow}>
           <View style={styles.statCard}>
             <Text style={styles.statLabel}>Next contribution</Text>
-            <Text style={styles.statValue}>
-              {nextContributionGroup ? formatCurrency(nextContributionGroup.contributionAmount) : '—'}
-            </Text>
-            <Text style={styles.statSub}>
-              {nextContributionGroup ? `In ${nextContributionGroup.nextContributionInHours}h` : ''}
-            </Text>
+            {nextContributionGroup ? (
+              <>
+                <Text style={styles.statValue}>
+                  {formatCurrency(nextContributionGroup.contributionAmount)}
+                </Text>
+                <Text style={styles.statSub}>In {nextContributionGroup.nextContributionInHours}h</Text>
+              </>
+            ) : (
+              <Text style={styles.statEmpty}>No upcoming contributions</Text>
+            )}
           </View>
           <View style={styles.statCard}>
             <Text style={styles.statLabel}>Next payout</Text>
-            <Text style={styles.statValue} numberOfLines={1}>
-              {payoutGroup?.currentRecipientName ?? '—'}
-            </Text>
-            <Text style={styles.statSubGreen}>{payoutGroup ? `Cycle ${payoutGroup.cycle}` : ''}</Text>
+            {payoutGroup ? (
+              <>
+                <Text style={styles.statValue} numberOfLines={1}>
+                  {payoutGroup.currentRecipientName}
+                </Text>
+                <Text style={styles.statSubGreen}>Cycle {payoutGroup.cycle}</Text>
+              </>
+            ) : (
+              <Text style={styles.statEmpty}>No payout scheduled</Text>
+            )}
           </View>
         </View>
 
@@ -111,6 +160,18 @@ export default function HomeScreen() {
             <GroupCardSkeleton />
             <GroupCardSkeleton />
           </View>
+        ) : groupsError && groups.length === 0 ? (
+          <ErrorState message={groupsError} onRetry={refresh} />
+        ) : groups.length === 0 ? (
+          <EmptyState
+            icon="account-group-outline"
+            title="You have no groups yet"
+            subtitle="Create your own susu circle or join one with an invite code from a friend."
+            actionLabel="Create a group"
+            onAction={() => router.push('/group/create')}
+            secondaryActionLabel="Join a group"
+            onSecondaryAction={() => router.push('/join-group')}
+          />
         ) : (
           <FlatList
             data={groups}
@@ -123,26 +184,48 @@ export default function HomeScreen() {
         )}
 
         <Text style={[styles.sectionTitle, { marginTop: 28, marginBottom: 12 }]}>Recent Activity</Text>
-        <View style={styles.activityCard}>
-          {recentActivity.map((activity, idx) => {
-            const meta = ACTIVITY_ICONS[activity.type];
-            return (
-              <View
-                key={activity.id}
-                style={[styles.activityRow, idx < recentActivity.length - 1 && styles.activityDivider]}
-              >
-                <View style={[styles.activityIcon, { backgroundColor: meta.bg }]}>
-                  <MaterialCommunityIcons name={meta.icon} size={18} color={meta.fg} />
+        {notificationsLoading && !notificationsLoaded ? (
+          <View style={styles.activityCard}>
+            {[0, 1, 2].map((i) => (
+              <View key={i} style={[styles.activityRow, i < 2 && styles.activityDivider]}>
+                <SkeletonLoader width={36} height={36} borderRadius={18} />
+                <View style={{ flex: 1, gap: 8 }}>
+                  <SkeletonLoader width="55%" height={13} />
+                  <SkeletonLoader width="80%" height={10} />
                 </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.activityTitle}>{activity.title}</Text>
-                  <Text style={styles.activitySubtitle}>{activity.subtitle}</Text>
-                </View>
-                <Text style={styles.activityTime}>{activity.timestamp}</Text>
               </View>
-            );
-          })}
-        </View>
+            ))}
+          </View>
+        ) : recentActivity.length === 0 ? (
+          <View style={styles.activityEmpty}>
+            <MaterialCommunityIcons name="bell-outline" size={30} color={Colors.textMuted} />
+            <Text style={styles.activityEmptyTitle}>No recent activity yet</Text>
+            <Text style={styles.activityEmptySub}>
+              Your contributions, payouts, and group updates will appear here
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.activityCard}>
+            {recentActivity.map((activity, idx) => {
+              const meta = ACTIVITY_ICONS[activity.type];
+              return (
+                <View
+                  key={activity.id}
+                  style={[styles.activityRow, idx < recentActivity.length - 1 && styles.activityDivider]}
+                >
+                  <View style={[styles.activityIcon, { backgroundColor: meta.bg }]}>
+                    <MaterialCommunityIcons name={meta.icon} size={18} color={meta.fg} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.activityTitle}>{activity.title}</Text>
+                    <Text style={styles.activitySubtitle} numberOfLines={2}>{activity.body}</Text>
+                  </View>
+                  <Text style={styles.activityTime}>{activity.timestamp}</Text>
+                </View>
+              );
+            })}
+          </View>
+        )}
       </ScrollView>
 
       <TouchableOpacity style={styles.fab} activeOpacity={0.85} onPress={() => router.push('/(tabs)/groups')}>
@@ -195,6 +278,7 @@ const styles = StyleSheet.create({
   statValue: { fontSize: 18, fontWeight: '800', color: Colors.textPrimary, marginTop: 6 },
   statSub: { fontSize: 12, color: Colors.primary, marginTop: 4, fontWeight: '600' },
   statSubGreen: { fontSize: 12, color: Colors.success, marginTop: 4, fontWeight: '600' },
+  statEmpty: { fontSize: 13, color: Colors.textSecondary, marginTop: 8, lineHeight: 18 },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -229,6 +313,18 @@ const styles = StyleSheet.create({
   activityTitle: { fontSize: 14, fontWeight: '700', color: Colors.textPrimary },
   activitySubtitle: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
   activityTime: { fontSize: 11, color: Colors.textMuted },
+  activityEmpty: {
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    paddingVertical: 32,
+    paddingHorizontal: 24,
+    gap: 6,
+  },
+  activityEmptyTitle: { fontSize: 14, fontWeight: '700', color: Colors.textPrimary, marginTop: 4 },
+  activityEmptySub: { fontSize: 12, color: Colors.textSecondary, textAlign: 'center', lineHeight: 17 },
   fab: {
     position: 'absolute',
     bottom: 24,

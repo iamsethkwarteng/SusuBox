@@ -1,19 +1,23 @@
+import {
+  mapGroup,
+  mapPreview,
+  type BackendGroup,
+  type BackendPreview,
+} from '@/src/api/adapters';
 import { apiClient } from '@/src/api/client';
 import { ENDPOINTS } from '@/src/constants/api';
 import type { Group, GroupFrequency, GroupPreview } from '@/src/types';
 
-// BACKEND REQUIRED: GET /api/groups — all groups where the current user is an
-// active member (admin or regular).
+// GET /api/groups → { message, groups: [...] } (snake_case) — mapped to Group[].
 export async function fetchGroups(): Promise<Group[]> {
-  const { data } = await apiClient.get<Group[]>(ENDPOINTS.groups.list);
-  return data;
+  const { data } = await apiClient.get<{ groups: BackendGroup[] }>(ENDPOINTS.groups.list);
+  return (data.groups ?? []).map(mapGroup);
 }
 
-// BACKEND REQUIRED: GET /api/groups/:id — single group with members, current
-// cycle, rotation order, and (for admins) pendingRequests.
+// GET /api/groups/:id → { message, group } with members + current cycle.
 export async function fetchGroupDetail(groupId: string): Promise<Group> {
-  const { data } = await apiClient.get<Group>(ENDPOINTS.groups.detail(groupId));
-  return data;
+  const { data } = await apiClient.get<{ group: BackendGroup }>(ENDPOINTS.groups.detail(groupId));
+  return mapGroup(data.group);
 }
 
 export async function fetchRotation(groupId: string): Promise<Group['rotation']> {
@@ -31,27 +35,33 @@ export interface CreateGroupPayload {
   rules?: string;
 }
 
-// BACKEND REQUIRED: POST /api/groups — creates the group, auto-generates a
-// unique SUSU-XXXXXX invite code + susutrack.app/join/<code> link, and inserts
-// the creator as an active admin member with payout_position 1.
+// POST /api/groups — backend generates the SUSU-XXXXXX code + link and seats
+// the creator as admin position 1. Request keys are snake_case on the backend.
 export async function createGroup(payload: CreateGroupPayload): Promise<Group> {
-  const { data } = await apiClient.post<Group>(ENDPOINTS.groups.list, payload);
-  return data;
+  const { data } = await apiClient.post<{ group: BackendGroup }>(ENDPOINTS.groups.list, {
+    name: payload.name,
+    contribution_amount: payload.contributionAmount,
+    frequency: payload.frequency,
+    max_members: payload.maxMembers,
+    penalty_fee_per_cycle: payload.penaltyFee,
+    grace_period_days: payload.gracePeriodDays,
+    group_rules: payload.rules,
+  });
+  return mapGroup(data.group);
 }
 
-// BACKEND REQUIRED: GET /api/groups/preview/:inviteCode — PUBLIC route (no
-// auth) so the join screen can show name/amount/slots before login.
+// GET /api/groups/preview/:inviteCode — PUBLIC route → { message, preview }.
 export async function fetchGroupPreview(inviteCode: string): Promise<GroupPreview> {
-  const { data } = await apiClient.get<GroupPreview>(`/groups/preview/${inviteCode}`);
-  return data;
+  const { data } = await apiClient.get<{ preview: BackendPreview }>(`/groups/preview/${inviteCode}`);
+  return mapPreview(data.preview);
 }
 
-// BACKEND REQUIRED: POST /api/groups/join — creates a *pending* membership and
-// notifies the admin (FCM + email). Distinct error codes the UI handles:
-//   ALREADY_MEMBER, REMOVED_BLOCKED, GROUP_FULL, REQUEST_PENDING
+// POST /api/groups/join — creates a *pending* membership and notifies the admin
+// (FCM + email). Backend expects { invite_code, rules_agreed }. Distinct error
+// codes the UI handles: ALREADY_MEMBER, REMOVED_BLOCKED, GROUP_FULL, REQUEST_PENDING.
 export async function requestToJoin(inviteCode: string): Promise<{ status: 'pending' }> {
-  const { data } = await apiClient.post<{ status: 'pending' }>('/groups/join', { inviteCode });
-  return data;
+  await apiClient.post('/groups/join', { invite_code: inviteCode, rules_agreed: true });
+  return { status: 'pending' };
 }
 
 /** @deprecated old direct-join path; requestToJoin is the approval flow. */
@@ -80,10 +90,19 @@ export async function removeMember(groupId: string, memberId: string): Promise<v
   await apiClient.delete(`/groups/${groupId}/members/${memberId}`);
 }
 
-// BACKEND REQUIRED: PATCH /api/groups/:groupId/rotation — admin only; accepts
-// the full ordered member-id list. Rejected with 409 once cycle 1 has opened.
-export async function updateRotationOrder(groupId: string, orderedMemberIds: string[]): Promise<void> {
-  await apiClient.patch(`/groups/${groupId}/rotation`, { order: orderedMemberIds });
+// PATCH /api/groups/:groupId/rotation — admin only; rejected with 400 once
+// cycle 1 has opened. Backend expects { rotation: [{ userId, position }] } —
+// NOT a bare ordered id list — and matches each entry by the member's userId
+// (not the GroupMember row id).
+export interface RotationOrderEntry {
+  userId: string;
+  position: number;
+}
+
+export async function updateRotationOrder(groupId: string, order: RotationOrderEntry[]): Promise<void> {
+  await apiClient.patch(`/groups/${groupId}/rotation`, {
+    rotation: order.map((e) => ({ userId: e.userId, position: e.position })),
+  });
 }
 
 export async function closeCycleAndPayout(groupId: string): Promise<Group> {

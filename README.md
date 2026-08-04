@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Welcome to your Expo app 👋
 
 This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
@@ -25,6 +24,16 @@ In the output, you'll find options to open the app in a
 - [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
 
 You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+
+## Development Notes
+
+### Expo Go limitations
+
+- Custom permission wording in `app.json` only takes effect after a native rebuild via EAS Build
+- Permission prompts work correctly in Expo Go but show the default system wording
+- Profile photo upload works fully in Expo Go
+- FCM push notifications do not work in Expo Go — use an EAS dev build for real push notifications
+- Run `eas build --platform android --profile preview` for a full native build with all features
 
 ## Get a fresh project
 

@@ -1,4 +1,4 @@
-// SusuTrack brand palette — single source of truth for every screen/component.
+// SusuBox brand palette — single source of truth for every screen/component.
 // Keep this the only place raw hex values live; everything else imports from here.
 
 export const Colors = {

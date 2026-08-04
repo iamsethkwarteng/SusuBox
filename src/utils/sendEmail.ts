@@ -27,10 +27,10 @@ export async function sendEmail(payload: EmailPayload): Promise<{ sent: boolean 
   try {
     await apiClient.post('/notifications/email', payload);
     return { sent: true };
-  } catch (error) {
-    // DEMO FALLBACK: no backend yet — report success on network error so the
-    // confirmation toast flow can be exercised end-to-end in the demo build.
-    if (isNetworkError(error)) return { sent: true };
+  } catch {
+    // Report honestly — never claim an email was sent when the request never
+    // reached the server. (Transactional emails are normally sent server-side
+    // as a side effect of the action, so this endpoint is a manual trigger.)
     return { sent: false };
   }
 }

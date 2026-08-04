@@ -1,17 +1,19 @@
 {
   "expo": {
-    "name": "SusuTrack",
-    "slug": "SusuTrack",
+    "name": "SusuBox",
+    "slug": "susubox",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "susutrack",
+    "scheme": "susubox",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.susubox.app"
     },
     "android": {
+      "package": "com.susubox.app",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -43,7 +45,8 @@
       [
         "expo-image-picker",
         {
-          "cameraPermission": "SusuTrack uses your camera to capture your ID document and a verification selfie.",
+          "cameraPermission": "SusuBox uses your camera to capture your ID document, a verification selfie, and your profile picture.",
+          "photosPermission": "SusuBox needs access to your photos so you can choose a profile picture.",
           "microphonePermission": false
         }
       ],
@@ -57,7 +60,7 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "SusuTrack uses your camera for identity verification (ID card and selfie capture)."
+          "cameraPermission": "SusuBox uses your camera for identity verification (ID card and selfie capture)."
         }
       ]
     ],

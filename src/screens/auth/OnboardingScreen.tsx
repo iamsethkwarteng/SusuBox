@@ -16,7 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Colors } from '@/src/constants/colors';
 
-const ONBOARDING_SEEN_KEY = 'susutrack_onboarding_seen';
+const ONBOARDING_SEEN_KEY = 'susubox_onboarding_seen';
 const { width } = Dimensions.get('window');
 
 interface Slide {
@@ -76,7 +76,7 @@ export default function OnboardingScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <View style={styles.header}>
-        <Text style={styles.brand}>SusuSavings</Text>
+        <Text style={styles.brand}>SusuBox</Text>
         <TouchableOpacity onPress={finishOnboarding}>
           <Text style={styles.skip}>Skip</Text>
         </TouchableOpacity>

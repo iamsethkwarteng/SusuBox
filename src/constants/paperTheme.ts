@@ -2,7 +2,7 @@ import { MD3LightTheme } from 'react-native-paper';
 
 import { Colors } from '@/src/constants/colors';
 
-// Maps the SusuTrack brand palette onto Material Design 3 role tokens so
+// Maps the SusuBox brand palette onto Material Design 3 role tokens so
 // every React Native Paper component (TextInput, Button, Checkbox, …)
 // matches the rest of the hand-styled UI without per-component overrides.
 export const paperTheme = {

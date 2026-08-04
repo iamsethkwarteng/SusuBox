@@ -31,6 +31,10 @@ yarn-error.*
 *.pem
 
 # local env files
+# .env holds this build's API URL + Cloudinary preset. EXPO_PUBLIC_* vars are
+# inlined into the app bundle so they are not secrets, but the file is
+# machine-specific (LAN IP) — commit .env.example instead.
+.env
 .env*.local
 
 # typescript

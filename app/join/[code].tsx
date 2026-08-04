@@ -6,8 +6,8 @@ import { getToken } from '@/src/api/client';
 import { Colors } from '@/src/constants/colors';
 import { savePendingInvite } from '@/src/utils/pendingInvite';
 
-// Update 8 — deep-link entry point for susutrack://join/<code> and
-// susutrack.app/join/<code>. Joining requires an account:
+// Update 8 — deep-link entry point for susubox://join/<code> and
+// susubox.app/join/<code>. Joining requires an account:
 //   • logged in  → straight to JoinGroupScreen with the code pre-filled
 //   • logged out → park the code in secure store (survives app restarts) and
 //                  send the user to Login, which shows "Log in to join …".

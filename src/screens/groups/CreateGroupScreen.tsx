@@ -16,9 +16,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { isNetworkError } from '@/src/api/client';
 import { createGroup } from '@/src/api/groups';
 import { Colors } from '@/src/constants/colors';
+import { useAuth } from '@/src/hooks/useAuth';
 import type { GroupFrequency } from '@/src/types';
 
 export default function CreateGroupScreen() {
+  const { user } = useAuth();
   const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
   const [frequency, setFrequency] = useState<GroupFrequency>('weekly');
@@ -54,17 +56,15 @@ export default function CreateGroupScreen() {
         params: { groupId: group.id, groupName: group.name, inviteCode: group.inviteCode },
       });
     } catch (err) {
-      if (isNetworkError(err)) {
-        // DEMO FALLBACK: fabricate the code locally so the full create →
-        // celebrate → share flow is testable before the backend exists.
-        const demoCode = `SUSU-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
-        router.replace({
-          pathname: '/group/created',
-          params: { groupId: 'g1', groupName: name.trim(), inviteCode: demoCode },
-        });
-        return;
-      }
-      setError('Could not create the group. Please try again.');
+      // Never fabricate an invite code: the group was NOT created on the
+      // server, so a locally-made code would send members to a group that
+      // does not exist. Surface the real failure instead.
+      setError(
+        isNetworkError(err)
+          ? 'Could not reach the server. Check your connection and try again.'
+          : ((err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+            'Could not create the group. Please try again.'),
+      );
     } finally {
       setSubmitting(false);
     }
@@ -174,6 +174,34 @@ export default function CreateGroupScreen() {
             activeOutlineColor={Colors.primary}
           />
 
+          {/* Payment account (optional) — member contributions collect into an
+              account settled to the admin's MoMo. The subaccount is created from
+              your saved MoMo when the group is created; add it first to enable
+              in-app payments (you can also add it later in Settings). */}
+          <Text style={styles.sectionHeader}>Payment Account (Optional)</Text>
+          {user?.momoNumber ? (
+            <View style={[styles.momoBox, styles.momoBoxOk]}>
+              <MaterialCommunityIcons name="check-decagram" size={20} color={Colors.success} />
+              <Text style={styles.momoOkText}>
+                In-app payments enabled — contributions settle to your {user.momoNetwork} ****
+                {user.momoNumber.slice(-4)}.
+              </Text>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={[styles.momoBox, styles.momoBoxWarn]}
+              activeOpacity={0.85}
+              onPress={() => router.push('/momo-setup')}
+            >
+              <MaterialCommunityIcons name="cellphone-cog" size={20} color={Colors.warning} />
+              <Text style={styles.momoWarnText}>
+                Add your MoMo number to collect contributions in-app. Tap to set it up (optional — you
+                can also add it later in Settings).
+              </Text>
+              <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.warning} />
+            </TouchableOpacity>
+          )}
+
           {error ? <Text style={styles.error}>{error}</Text> : null}
 
           <TouchableOpacity
@@ -248,6 +276,20 @@ const styles = StyleSheet.create({
   toggleLabelActive: {
     color: Colors.white,
   },
+  sectionHeader: { fontSize: 13, fontWeight: '700', color: Colors.textSecondary, marginBottom: 10, marginTop: 4 },
+  momoBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 14,
+    marginBottom: 16,
+  },
+  momoBoxOk: { backgroundColor: Colors.successLight, borderColor: Colors.success },
+  momoBoxWarn: { backgroundColor: Colors.warningLight, borderColor: Colors.warning },
+  momoOkText: { flex: 1, fontSize: 12.5, color: Colors.success, lineHeight: 18, fontWeight: '600' },
+  momoWarnText: { flex: 1, fontSize: 12.5, color: Colors.warning, lineHeight: 18 },
   error: {
     color: Colors.danger,
     fontSize: 13,

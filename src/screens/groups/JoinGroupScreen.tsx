@@ -19,7 +19,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { isNetworkError } from '@/src/api/client';
 import { fetchGroupPreview, requestToJoin } from '@/src/api/groups';
 import { Colors } from '@/src/constants/colors';
-import { groups as sampleGroups } from '@/src/constants/sampleData';
 import type { GroupPreview } from '@/src/types';
 import { formatCurrency } from '@/src/utils/formatCurrency';
 import { clearPendingInvite } from '@/src/utils/pendingInvite';
@@ -63,23 +62,13 @@ export default function JoinGroupScreen() {
       setPreview(data);
       setState('previewReady');
     } catch (error) {
-      if (isNetworkError(error)) {
-        // DEMO FALLBACK: resolve against bundled sample groups so the flow is
-        // walkable offline; unknown codes get a generic demo group.
-        const match = sampleGroups.find((g) => g.inviteCode === code);
-        setPreview({
-          id: match?.id ?? 'g-demo',
-          name: match?.name ?? 'Adum Market Ladies',
-          contributionAmount: match?.contributionAmount ?? 100,
-          frequency: match?.frequency ?? 'weekly',
-          slotsRemaining: match ? match.maxMembers - match.memberCount : 3,
-          adminName: match?.adminName ?? 'Ama Osei',
-          rules: match?.rules ?? 'Contributions due weekly. Late payments attract a penalty fee. Payouts follow rotation order.',
-        });
-        setState('previewReady');
-        return;
-      }
-      setErrorMessage('Invite code not found. Check the code and try again.');
+      // Never invent a group from sample data — a user must only ever see a
+      // real group they are about to join.
+      setErrorMessage(
+        isNetworkError(error)
+          ? 'Could not reach the server. Check your connection and try again.'
+          : 'Invite code not found. Check the code and try again.',
+      );
       setState('error');
     }
   }, []);
@@ -121,7 +110,7 @@ export default function JoinGroupScreen() {
     try {
       // Mechanism 7 — persist when this member agreed to this group's rules.
       await SecureStore.setItemAsync(
-        `susutrack_rules_agreed_${preview.id}`,
+        `susubox_rules_agreed_${preview.id}`,
         new Date().toISOString(),
       ).catch(() => undefined);
 
@@ -130,9 +119,10 @@ export default function JoinGroupScreen() {
       setState('pending');
     } catch (error) {
       if (isNetworkError(error)) {
-        // DEMO FALLBACK: no backend — land on the pending state.
-        await clearPendingInvite();
-        setState('pending');
+        // Never fake a successful join request — the server never received it,
+        // so tell the user plainly instead of showing a false "pending" state.
+        setErrorMessage('Could not send your request. Check your connection and try again.');
+        setState('previewReady');
         return;
       }
       const code = axios.isAxiosError(error)

@@ -16,8 +16,8 @@ export interface CloudinaryUploadResult {
  *
  * Folder routing keeps the media library organised and lets Cloudinary access
  * rules differ per document type:
- *   id_cards -> susutrack/id_cards/   selfies -> susutrack/selfies/
- *   profiles -> susutrack/profiles/
+ *   id_cards -> susubox/id_cards/   selfies -> susubox/selfies/
+ *   profiles -> susubox/profiles/
  *
  * BACKEND REQUIRED: for production, switch to *signed* uploads — the backend
  * generates a short-lived signature (POST /api/uploads/sign) so the preset
@@ -37,7 +37,7 @@ export async function uploadToCloudinary(
       type: 'image/jpeg',
     } as unknown as Blob);
     form.append('upload_preset', uploadPreset);
-    form.append('folder', `susutrack/${folder}`);
+    form.append('folder', `susubox/${folder}`);
 
     const response = await fetch(CLOUDINARY_UPLOAD_URL, { method: 'POST', body: form });
     const data = (await response.json()) as { secure_url?: string; error?: { message?: string } };

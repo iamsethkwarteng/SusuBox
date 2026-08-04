@@ -1,15 +1,17 @@
+import { mapNotification, type BackendNotification } from '@/src/api/adapters';
 import { apiClient } from '@/src/api/client';
 import { ENDPOINTS } from '@/src/constants/api';
 import type { AppNotification } from '@/src/types';
 
-// BACKEND REQUIRED: GET /api/notifications — all notifications for the
-// current user, newest first.
+// GET /api/notifications → { message, unread_count, notifications: [...] }.
 export async function fetchNotifications(): Promise<AppNotification[]> {
-  const { data } = await apiClient.get<AppNotification[]>(ENDPOINTS.notifications.list);
-  return data;
+  const { data } = await apiClient.get<{ notifications: BackendNotification[] }>(
+    ENDPOINTS.notifications.list,
+  );
+  return (data.notifications ?? []).map(mapNotification);
 }
 
-// BACKEND REQUIRED: PATCH /api/notifications/:id/read
+// PATCH /api/notifications/:id/read
 export async function markNotificationRead(id: string): Promise<void> {
   await apiClient.patch(ENDPOINTS.notifications.markRead(id));
 }

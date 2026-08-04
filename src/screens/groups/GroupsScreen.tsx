@@ -4,6 +4,8 @@ import React, { useState } from 'react';
 import { FlatList, Modal, RefreshControl, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import EmptyState from '@/src/components/EmptyState';
+import ErrorState from '@/src/components/ErrorState';
 import GroupCard from '@/src/components/GroupCard';
 import { GroupCardSkeleton } from '@/src/components/SkeletonLoader';
 import { Colors } from '@/src/constants/colors';
@@ -44,11 +46,9 @@ export default function GroupsScreen() {
         <Text style={styles.title}>My Groups</Text>
       </View>
 
-      {error ? (
-        <View style={styles.centerState}>
-          <MaterialCommunityIcons name="wifi-alert" size={28} color={Colors.textMuted} />
-          <Text style={styles.errorText}>{error}</Text>
-        </View>
+      {error && groups.length === 0 ? (
+        // Never fall back to sample groups — show an honest error + retry.
+        <ErrorState message={error} onRetry={refresh} />
       ) : isLoading && groups.length === 0 ? (
         <View style={styles.listPadding}>
           {actionButtons}
@@ -66,15 +66,17 @@ export default function GroupsScreen() {
           ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
           renderItem={({ item }) => <GroupCard group={item} onPress={openGroup} />}
           ListEmptyComponent={
-            <View style={styles.centerState}>
-              <View style={styles.emptyIllustration}>
-                <MaterialCommunityIcons name="account-group-outline" size={44} color={Colors.primary} />
-              </View>
-              <Text style={styles.emptyTitle}>You have no groups yet</Text>
-              <Text style={styles.emptyText}>
-                Create your own susu circle or join one with an invite code from a friend.
-              </Text>
-            </View>
+            // A brand new user legitimately has zero groups — this is the
+            // correct outcome, never a reason to show sample groups.
+            <EmptyState
+              icon="account-group-outline"
+              title="You have no groups yet"
+              subtitle="Create your own susu circle or join one with an invite code from a friend."
+              actionLabel="Create a Group"
+              onAction={goCreate}
+              secondaryActionLabel="Join a Group"
+              onSecondaryAction={goJoin}
+            />
           }
         />
       )}

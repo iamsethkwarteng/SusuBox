@@ -1,7 +1,17 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import React, { useState } from 'react';
-import { ActivityIndicator, Alert, Image, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  Image,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 
 import { Colors } from '@/src/constants/colors';
 import { uploadToCloudinary } from '@/src/utils/uploadToCloudinary';
@@ -13,25 +23,97 @@ import { uploadToCloudinary } from '@/src/utils/uploadToCloudinary';
 // check that filters out obvious non-document photos before upload; it does
 // NOT verify authenticity.
 
-export type DocumentType = 'ghana_card' | 'voter_id' | 'passport';
+export type DocumentType = 'ghana_card' | 'voter_id' | 'passport' | 'drivers_licence';
 
 export const DOCUMENT_LABELS: Record<DocumentType, string> = {
   ghana_card: 'Ghana Card',
   voter_id: 'Voter ID',
   passport: 'Passport',
+  drivers_licence: "Driver's Licence",
 };
 
-// ID-1 cards are 85.6mm x 53.98mm ≈ 1.586:1. Accept a generous window around
-// that (hand-held photos are never perfectly framed) but reject square-ish and
-// portrait captures outright — those are almost never a flat ID card.
-const ID_CARD_RATIO = 85.6 / 53.98;
-const RATIO_MIN = 1.25;
-const RATIO_MAX = 2.1;
+// Field label shown above the ID number input, per document type.
+const ID_NUMBER_LABELS: Record<DocumentType, string> = {
+  ghana_card: 'Ghana Card Number',
+  voter_id: 'Voter ID Number',
+  passport: 'Passport Number',
+  drivers_licence: 'Licence Number',
+};
 
-function looksLikeIdCard(width: number, height: number): boolean {
-  if (!width || !height) return true; // dimensions unavailable — don't block
-  const ratio = width / height;
-  return ratio >= RATIO_MIN && ratio <= RATIO_MAX;
+const ID_NUMBER_PLACEHOLDERS: Record<DocumentType, string> = {
+  ghana_card: 'GHA-123456789-0',
+  voter_id: '1234567890',
+  passport: 'AB1234567',
+  drivers_licence: 'B1234567',
+};
+
+// Where on the document the number is printed — shown as a hint once the user
+// starts typing, so they can confirm they're reading the right field.
+const ID_NUMBER_HINTS: Record<DocumentType, string> = {
+  ghana_card: 'Found on the front of your Ghana Card',
+  voter_id: 'Found on the front of your Voter ID card',
+  passport: 'Found on the photo page of your passport',
+  drivers_licence: "Found on the front of your Driver's Licence",
+};
+
+// Normalises keystrokes into the canonical shape for the selected document, so
+// the value that reaches validation (and the backend) is always consistent.
+// Ghana Card gets the GHA- prefix and hyphens inserted automatically — users
+// type the digits and the mask does the rest.
+export function formatIDNumber(text: string, idType: DocumentType): string {
+  const clean = text.toUpperCase().replace(/[^A-Z0-9-]/g, '');
+  switch (idType) {
+    case 'ghana_card': {
+      const digits = clean.replace(/[^0-9]/g, '').slice(0, 10);
+      if (digits.length === 0) return '';
+      if (digits.length <= 9) return `GHA-${digits}`;
+      return `GHA-${digits.slice(0, 9)}-${digits.slice(9, 10)}`;
+    }
+    case 'voter_id':
+      return clean.replace(/[^0-9]/g, '').slice(0, 10);
+    case 'passport':
+      return clean.replace(/-/g, '').slice(0, 9);
+    case 'drivers_licence':
+      return clean.replace(/-/g, '').slice(0, 10);
+    default:
+      return clean;
+  }
+}
+
+// Returns an error message, or null when the number is well-formed.
+// NOTE: this checks FORMAT only — it cannot tell whether the number is real or
+// belongs to this person. The admin still cross-checks it against the uploaded
+// card photo, and full authenticity checking needs the Smile Identity / NIA
+// integration described in the production-KYC note above.
+export function validateIDNumber(value: string, idType: DocumentType): string | null {
+  if (!value.trim()) return 'Please enter your ID number.';
+  switch (idType) {
+    case 'ghana_card':
+      return /^GHA-\d{9}-\d$/.test(value) ? null : 'Ghana Card number must look like GHA-123456789-0.';
+    case 'voter_id':
+      return /^\d{10}$/.test(value) ? null : 'Voter ID must be exactly 10 digits.';
+    case 'passport':
+      return /^[A-Z]{2}\d{7}$/.test(value) ? null : 'Passport number must be 2 letters followed by 7 digits.';
+    case 'drivers_licence':
+      return /^[A-Z]{1,2}\d{6,8}$/.test(value)
+        ? null
+        : "Licence number must be 1-2 letters followed by 6-8 digits.";
+    default:
+      return null;
+  }
+}
+
+// ID-1 cards are 85.6mm x 53.98mm ≈ 1.586:1 — used only for the visual frame
+// guide's aspect ratio, NOT as a validation gate. A strict ratio check rejected
+// valid captures from different phone cameras, so we now only verify the photo
+// is landscape (the white frame overlay handles the actual positioning).
+const ID_CARD_RATIO = 85.6 / 53.98;
+
+// True only when we can confidently tell the capture is portrait. If the camera
+// didn't report dimensions, don't block.
+function isPortrait(width: number, height: number): boolean {
+  if (!width || !height) return false;
+  return height > width;
 }
 
 type UploadState = 'idle' | 'uploading' | 'done' | 'failed';
@@ -42,6 +124,9 @@ interface IDCaptureScreenProps {
   /** Cloudinary URL once uploaded — the only thing persisted. */
   uploadedUrl: string | null;
   onUploaded: (url: string) => void;
+  /** Typed ID number, owned by RegisterScreen so it survives a resume. */
+  idNumber: string;
+  onIdNumberChange: (value: string) => void;
 }
 
 export default function IDCaptureScreen({
@@ -49,10 +134,17 @@ export default function IDCaptureScreen({
   onDocumentTypeChange,
   uploadedUrl,
   onUploaded,
+  idNumber,
+  onIdNumberChange,
 }: IDCaptureScreenProps) {
   const [uploadState, setUploadState] = useState<UploadState>(uploadedUrl ? 'done' : 'idle');
   const [localPreview, setLocalPreview] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // Only surfaced after a failed capture attempt or on blur — validating on
+  // every keystroke would flag a half-typed number as wrong.
+  const [idNumberError, setIdNumberError] = useState<string | null>(null);
+
+  const idNumberValid = validateIDNumber(idNumber, documentType) === null;
 
   const uploadCapture = async (uri: string) => {
     setUploadState('uploading');
@@ -70,6 +162,14 @@ export default function IDCaptureScreen({
   };
 
   const capture = async () => {
+    // The number must be in before the photo: it is what the reviewing admin
+    // compares the card image against, and asking for it afterwards invites
+    // the user to skip it.
+    const idError = validateIDNumber(idNumber, documentType);
+    if (idError) {
+      setIdNumberError(idError);
+      return;
+    }
     const permission = await ImagePicker.requestCameraPermissionsAsync();
     if (!permission.granted) {
       Alert.alert('Camera permission needed', 'Enable camera access in settings to continue verification.');
@@ -87,12 +187,9 @@ export default function IDCaptureScreen({
     if (result.canceled || !result.assets[0]) return;
 
     const asset = result.assets[0];
-    // Reject square/portrait captures — likely a selfie or random photo.
-    if (!looksLikeIdCard(asset.width, asset.height)) {
-      Alert.alert(
-        'Not an ID card',
-        'This does not look like an ID card. Please photograph your ID card directly.',
-      );
+    // Only guard against a portrait capture; the user can simply retake.
+    if (isPortrait(asset.width, asset.height)) {
+      Alert.alert('Hold it horizontally', 'Please hold your ID card horizontally and fill the frame');
       return;
     }
     setLocalPreview(asset.uri);
@@ -118,6 +215,48 @@ export default function IDCaptureScreen({
             </Text>
           </TouchableOpacity>
         ))}
+      </View>
+
+      {/* ID number — captured BEFORE the photo so the admin has a typed value
+          to compare the card image against. */}
+      <View style={styles.idNumberSection}>
+        <Text style={styles.fieldLabel}>{ID_NUMBER_LABELS[documentType]}</Text>
+        <TextInput
+          value={idNumber}
+          onChangeText={(text) => {
+            onIdNumberChange(formatIDNumber(text, documentType));
+            setIdNumberError(null);
+          }}
+          onBlur={() => setIdNumberError(idNumber ? validateIDNumber(idNumber, documentType) : null)}
+          placeholder={ID_NUMBER_PLACEHOLDERS[documentType]}
+          placeholderTextColor={Colors.textMuted}
+          autoCapitalize="characters"
+          autoCorrect={false}
+          keyboardType={documentType === 'voter_id' ? 'number-pad' : 'default'}
+          maxLength={20}
+          style={[
+            styles.idNumberInput,
+            idNumberError ? styles.inputError : null,
+            idNumberValid ? styles.inputSuccess : null,
+          ]}
+        />
+        {idNumberError ? (
+          <View style={styles.idHintRow}>
+            <MaterialCommunityIcons name="alert-circle-outline" size={14} color={Colors.danger} />
+            <Text style={styles.idErrorText}>{idNumberError}</Text>
+          </View>
+        ) : idNumber.length > 3 ? (
+          <View style={styles.idHintRow}>
+            <MaterialCommunityIcons
+              name={idNumberValid ? 'check-circle-outline' : 'information-outline'}
+              size={14}
+              color={idNumberValid ? Colors.success : Colors.textMuted}
+            />
+            <Text style={[styles.idHintText, idNumberValid && { color: Colors.success }]}>
+              {ID_NUMBER_HINTS[documentType]}
+            </Text>
+          </View>
+        ) : null}
       </View>
 
       <Pressable style={styles.captureFrame} onPress={uploadState === 'uploading' ? undefined : capture}>
@@ -151,7 +290,9 @@ export default function IDCaptureScreen({
       </Pressable>
 
       <Text style={styles.instruction}>
-        Place your {DOCUMENT_LABELS[documentType]} flat and fill the frame
+        {idNumberValid
+          ? 'Hold your phone steady and fill the white frame with your ID card'
+          : 'Enter your ID number above, then tap the frame to photograph your card'}
       </Text>
 
       {uploadState === 'failed' ? (
@@ -181,6 +322,8 @@ export default function IDCaptureScreen({
 const styles = StyleSheet.create({
   chipRow: {
     flexDirection: 'row',
+    // Four document types no longer fit on one line on narrow phones.
+    flexWrap: 'wrap',
     gap: 10,
     marginBottom: 20,
   },
@@ -203,6 +346,49 @@ const styles = StyleSheet.create({
   },
   chipLabelActive: {
     color: Colors.white,
+  },
+  idNumberSection: {
+    marginBottom: 18,
+  },
+  fieldLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    marginBottom: 8,
+  },
+  idNumberInput: {
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 12,
+    backgroundColor: Colors.surface,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    fontSize: 16,
+    letterSpacing: 1,
+    color: Colors.textPrimary,
+  },
+  inputError: {
+    borderColor: Colors.danger,
+    backgroundColor: Colors.dangerLight,
+  },
+  inputSuccess: {
+    borderColor: Colors.success,
+  },
+  idHintRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 7,
+  },
+  idErrorText: {
+    flex: 1,
+    fontSize: 12,
+    color: Colors.danger,
+  },
+  idHintText: {
+    flex: 1,
+    fontSize: 12,
+    color: Colors.textMuted,
   },
   captureFrame: {
     height: 250,

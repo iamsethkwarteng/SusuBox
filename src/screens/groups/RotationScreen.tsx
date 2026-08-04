@@ -7,15 +7,17 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import AvatarInitials from '@/src/components/AvatarInitials';
 import PayoutDeductionCard from '@/src/components/PayoutDeductionCard';
+import PayoutStatusBanner, { type PayoutBannerStatus } from '@/src/components/PayoutStatusBanner';
 import ReliabilityBar from '@/src/components/ReliabilityBar';
 import { showToast } from '@/src/components/Toast';
 import { Colors } from '@/src/constants/colors';
 import { isNetworkError } from '@/src/api/client';
+import { closeCycle } from '@/src/api/cycles';
 import { updateRotationOrder } from '@/src/api/groups';
-import { useGroup } from '@/src/hooks/useGroups';
-import { sendEmail } from '@/src/utils/sendEmail';
-import { currentUser } from '@/src/constants/sampleData';
-import type { RotationEntry } from '@/src/types';
+import { useAuth } from '@/src/hooks/useAuth';
+import { useGroupDetail } from '@/src/hooks/useGroups';
+import MemberProfileSheet from '@/src/screens/groups/MemberProfileSheet';
+import type { GroupMember, RotationEntry } from '@/src/types';
 import { formatCurrency } from '@/src/utils/formatCurrency';
 import { formatDate } from '@/src/utils/formatDate';
 
@@ -27,9 +29,12 @@ const STATE_LABEL: Record<RotationEntry['state'], string> = {
 
 export default function RotationScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const group = useGroup(id);
+  const { group, refresh } = useGroupDetail(id);
+  const { user } = useAuth();
+  const [selectedMember, setSelectedMember] = useState<GroupMember | null>(null);
   // Mechanism 3 — admin must confirm the deduction breakdown explicitly.
   const [breakdownConfirmed, setBreakdownConfirmed] = useState(false);
+  const [closing, setClosing] = useState(false);
   // Mechanism 1 — local draggable order while cycle 1 hasn't opened.
   const [draftOrder, setDraftOrder] = useState<RotationEntry[]>([]);
 
@@ -51,10 +56,38 @@ export default function RotationScreen() {
   if (!group) return null;
 
   const isAdmin = group.role === 'organizer';
-  const net = Math.max(0, group.expected - arrears - penalty);
-  const closeDisabled = group.payoutFrozen || !breakdownConfirmed;
 
-  const handleClosePress = () => {
+  // Same single rule as everywhere else: my own avatar → Profile, anyone
+  // else's → their profile sheet.
+  const openMemberProfile = (member: GroupMember | undefined) => {
+    if (!member) return;
+    if (member.userId === user?.id) {
+      router.push('/(tabs)/profile');
+      return;
+    }
+    setSelectedMember(member);
+  };
+  const memberById = (memberId: string) => group.members.find((m) => m.id === memberId);
+  const recipientMember = group.members.find((m) => m.userId === group.currentRecipientId);
+
+  const net = Math.max(0, group.expected - arrears - penalty);
+  const closeDisabled = group.payoutFrozen || !breakdownConfirmed || closing;
+
+  // Payout banner state, derived from the latest closed/paid-out cycle.
+  const payoutStatus: PayoutBannerStatus =
+    group.payoutCycleStatus === 'paid_out'
+      ? 'paid_out'
+      : group.payoutCycleStatus === 'closed'
+        ? group.payoutCycleBlocked
+          ? 'blocked'
+          : group.payoutRecipient && !group.payoutRecipient.hasMomo
+            ? 'no_momo'
+            : 'closed'
+        : 'open';
+  const payoutRecipientName = group.payoutRecipient?.name ?? group.currentRecipientName;
+  const payoutNet = group.payoutNetAmount ?? net;
+
+  const handleClosePress = async () => {
     // Mechanism 2 — tapping the disabled button explains exactly why.
     if (group.payoutFrozen) {
       showToast(`Clear ${lateMember?.name ?? 'the member'}'s arrears before releasing payout`);
@@ -64,23 +97,32 @@ export default function RotationScreen() {
       showToast('Tick "I confirm this breakdown is correct" first');
       return;
     }
-    // BACKEND REQUIRED: POST /api/payments/payout/confirm — calculates net
-    // after deductions server-side, transfers, then sends FCM + email.
-    sendEmail({
-      type: 'payout_received',
-      data: {
-        name: group.currentRecipientName,
-        groupName: group.name,
-        pot: group.expected,
-        arrears,
-        penalties: penalty,
-        net,
-      },
-    }).then(({ sent }) => {
-      if (sent) showToast(`Confirmation email sent to ${currentUser.email}`);
-    });
-    showToast(`Payout of ${formatCurrency(net)} confirmed for ${group.currentRecipientName}`);
-    setBreakdownConfirmed(false);
+    if (!group.currentCycleId) {
+      showToast('No open cycle to close');
+      return;
+    }
+    setClosing(true);
+    try {
+      // Close applies penalties + recomputes reliability and calculates the net
+      // payout. The money is sent in the reviewed PayoutPreview step (real
+      // Paystack transfer to the recipient's MoMo), not here.
+      await closeCycle(group.id, group.currentCycleId);
+      setBreakdownConfirmed(false);
+      refresh();
+      showToast('Cycle closed — review and send the payout');
+      router.push(`/group/${group.id}/payout`);
+    } catch (error) {
+      if (isNetworkError(error)) {
+        showToast('You appear to be offline');
+      } else {
+        const message =
+          (error as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          'Could not close the cycle.';
+        showToast(message);
+      }
+    } finally {
+      setClosing(false);
+    }
   };
 
   const handleDragEnd = async (data: RotationEntry[]) => {
@@ -88,15 +130,19 @@ export default function RotationScreen() {
     const renumbered = data.map((entry, index) => ({ ...entry, position: index + 1 }));
     setDraftOrder(renumbered);
     try {
-      await updateRotationOrder(group.id, renumbered.map((e) => e.memberId));
+      await updateRotationOrder(
+        group.id,
+        renumbered.map((e) => ({ userId: e.userId, position: e.position })),
+      );
       showToast('Rotation order saved');
     } catch (error) {
-      if (isNetworkError(error)) {
-        showToast('Rotation order saved'); // DEMO FALLBACK: kept locally
-        return;
-      }
-      setDraftOrder(group.rotation); // revert on real server rejection
-      showToast('Could not save order — reverted');
+      // Never report a save that didn't reach the server — revert and say so.
+      setDraftOrder(group.rotation);
+      showToast(
+        isNetworkError(error)
+          ? 'Could not save order — check your connection'
+          : 'Could not save order — reverted',
+      );
     }
   };
 
@@ -114,6 +160,17 @@ export default function RotationScreen() {
           {group.totalCycles} cycles total · {group.history.filter((h) => h.completed).length} completed
         </Text>
       </View>
+
+      {/* Payout status for the latest closed/paid-out cycle. Admins get a
+          "Send Payout" button that opens the reviewed MoMo transfer screen. */}
+      <PayoutStatusBanner
+        status={payoutStatus}
+        recipientName={payoutRecipientName}
+        netAmount={payoutNet}
+        network={group.payoutRecipient?.momoNetwork}
+        isAdmin={isAdmin}
+        onSendPayout={() => router.push(`/group/${group.id}/payout`)}
+      />
 
       {/* Mechanism 2 — payout freeze, named member + amount. */}
       {group.payoutFrozen && lateMember ? (
@@ -169,7 +226,12 @@ export default function RotationScreen() {
           activeOpacity={0.9}
         >
           <Text style={styles.dragPosition}>{(getIndex() ?? 0) + 1}</Text>
-          <AvatarInitials name={item.memberName} size={40} />
+          <AvatarInitials
+            name={item.memberName}
+            photoUrl={memberById(item.memberId)?.avatarUrl}
+            size={40}
+            onPress={() => openMemberProfile(memberById(item.memberId))}
+          />
           <View style={{ flex: 1, gap: 5 }}>
             <Text style={styles.dragName}>{item.memberName}</Text>
             <ReliabilityBar score={item.reliabilityScore ?? 50} />
@@ -191,7 +253,12 @@ export default function RotationScreen() {
             <Text style={styles.headerTitle}>Payout rotation</Text>
             <Text style={styles.headerSubtitle}>{group.name}</Text>
           </View>
-          <AvatarInitials name={group.currentRecipientName} size={32} />
+          <AvatarInitials
+            name={group.currentRecipientName}
+            photoUrl={recipientMember?.avatarUrl}
+            size={32}
+            onPress={recipientMember ? () => openMemberProfile(recipientMember) : undefined}
+          />
         </View>
         <DraggableFlatList
           data={draftOrder}
@@ -201,6 +268,12 @@ export default function RotationScreen() {
           ListHeaderComponent={header}
           containerStyle={{ flex: 1 }}
           contentContainerStyle={styles.container}
+        />
+        <MemberProfileSheet
+          member={selectedMember}
+          onClose={() => setSelectedMember(null)}
+          isAdmin={isAdmin}
+          groupId={group.id}
         />
       </SafeAreaView>
     );
@@ -217,7 +290,12 @@ export default function RotationScreen() {
           <Text style={styles.headerTitle}>Payout rotation</Text>
           <Text style={styles.headerSubtitle}>{group.name}</Text>
         </View>
-        <AvatarInitials name={group.currentRecipientName} size={32} />
+        <AvatarInitials
+          name={group.currentRecipientName}
+          photoUrl={recipientMember?.avatarUrl}
+          size={32}
+          onPress={recipientMember ? () => openMemberProfile(recipientMember) : undefined}
+        />
       </View>
 
       <ScrollView contentContainerStyle={[styles.container, { paddingBottom: 150 }]}>
@@ -288,11 +366,18 @@ export default function RotationScreen() {
               size={18}
               color={Colors.white}
             />
-            <Text style={styles.closeLabel}>Close cycle & Payout</Text>
+            <Text style={styles.closeLabel}>{closing ? 'Processing…' : 'Close cycle & Payout'}</Text>
           </TouchableOpacity>
           <Text style={styles.footerHint}>Only admins can close the cycle once all payments are verified.</Text>
         </View>
       ) : null}
+
+      <MemberProfileSheet
+        member={selectedMember}
+        onClose={() => setSelectedMember(null)}
+        isAdmin={isAdmin}
+        groupId={group.id}
+      />
     </SafeAreaView>
   );
 }

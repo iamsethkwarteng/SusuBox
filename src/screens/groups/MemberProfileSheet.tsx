@@ -11,10 +11,18 @@ import { showToast } from '@/src/components/Toast';
 import { Colors } from '@/src/constants/colors';
 import { isNetworkError } from '@/src/api/client';
 import { removeMember } from '@/src/api/groups';
-import { currentUser } from '@/src/constants/sampleData';
+import { getCurrentAuthUser } from '@/src/hooks/useAuth';
 import type { GroupMember } from '@/src/types';
 import { formatCurrency } from '@/src/utils/formatCurrency';
 import { reliabilityLabel } from '@/src/utils/reliabilityColor';
+
+// Labels the ID-number row by the document the member actually registered with.
+const ID_TYPE_LABELS: Record<string, string> = {
+  ghana_card: 'Ghana Card No.',
+  voter_id: 'Voter ID No.',
+  passport: 'Passport No.',
+  drivers_licence: 'Licence No.',
+};
 
 interface MemberProfileSheetProps {
   member: GroupMember | null;
@@ -37,9 +45,14 @@ export default function MemberProfileSheet({
 
   if (!member) return null;
 
-  const streak = member.streak ?? (member.userId === currentUser.id ? currentUser.streak : 0);
+  // Was previously compared against the sampleData demo user (fixed id 'u1'),
+  // so isSelf was effectively always false for a real signed-in admin — the
+  // "Remove Member" button would incorrectly show on the admin's own profile
+  // (the backend does reject self-removal, but the button shouldn't appear).
+  const authUser = getCurrentAuthUser();
+  const streak = member.streak ?? (authUser && member.userId === authUser.id ? authUser.streak : 0);
   const badges = earnedTiers(streak);
-  const isSelf = member.userId === currentUser.id;
+  const isSelf = authUser != null && member.userId === authUser.id;
 
   const handleViewPenalty = () => {
     Alert.alert(
@@ -73,12 +86,15 @@ export default function MemberProfileSheet({
             try {
               if (groupId) await removeMember(groupId, member.id);
             } catch (error) {
-              if (!isNetworkError(error)) {
-                setRemoving(false);
-                showToast('Could not remove member — try again');
-                return;
-              }
-              // DEMO FALLBACK: no backend — apply locally.
+              // Never fake a removal — if the server didn't record it the member
+              // is still in the group and the admin must be able to retry.
+              setRemoving(false);
+              showToast(
+                isNetworkError(error)
+                  ? 'Could not remove member — check your connection and try again'
+                  : 'Could not remove member — try again',
+              );
+              return;
             }
             setRemoving(false);
             showToast(`${member.name} removed and blocklisted`);
@@ -99,7 +115,10 @@ export default function MemberProfileSheet({
             <AvatarInitials name={member.name} size={88} />
           </View>
           <Text style={styles.name}>{member.name}</Text>
-          <IDVerifiedBadge />
+          {/* Was previously shown unconditionally for every member regardless
+              of their real id_verified status — a false "verified" badge on an
+              unverified member. Only render when the backend actually confirms it. */}
+          {member.idVerified ? <IDVerifiedBadge /> : null}
 
           <View style={styles.scoreCard}>
             <View style={styles.scoreHeader}>
@@ -155,6 +174,18 @@ export default function MemberProfileSheet({
                   <MaterialCommunityIcons name="shield-check-outline" size={14} color={Colors.primary} />
                   <Text style={styles.kycVerifyLabel}>Verify Identity</Text>
                 </TouchableOpacity>
+              </View>
+
+              {/* The number the member typed at registration. Cross-check it
+                  against the card photo above before marking them verified —
+                  a mismatch is the cheapest fraud signal available here. */}
+              <View style={styles.idNumberRow}>
+                <Text style={styles.idNumberLabel}>
+                  {member.idType ? ID_TYPE_LABELS[member.idType] ?? 'ID Number' : 'ID Number'}
+                </Text>
+                <Text style={[styles.idNumberValue, !member.idNumber && styles.idNumberMissing]}>
+                  {member.idNumber || 'Not provided'}
+                </Text>
               </View>
             </View>
           ) : null}
@@ -277,6 +308,24 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   kycVerifyLabel: { color: Colors.primary, fontSize: 12, fontWeight: '700' },
+  idNumberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: Colors.divider,
+  },
+  idNumberLabel: { fontSize: 12, color: Colors.textSecondary, fontWeight: '600' },
+  idNumberValue: {
+    fontSize: 13,
+    color: Colors.textPrimary,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  idNumberMissing: { color: Colors.textMuted, fontWeight: '600', letterSpacing: 0 },
   removeButton: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -7,17 +7,33 @@ export type MemberRole = 'organizer' | 'member';
 
 export type GroupFrequency = 'weekly' | 'monthly';
 
+export type MoMoNetwork = 'MTN' | 'Vodafone' | 'AirtelTigo';
+
 export interface User {
   id: string;
   name: string;
   phone: string;
   email: string;
   avatarUrl?: string;
-  /** Cloudinary URL of the profile photo (susutrack/profiles/). */
+  /** Cloudinary URL of the profile photo (susubox/profiles/). */
   profilePhotoUrl?: string;
   idVerified: boolean;
   /** True once ID + selfie were submitted, even if review is still pending. */
   idSubmitted?: boolean;
+  /** False until the user opens the link mailed at registration. While false,
+   *  every protected backend route returns 403 EMAIL_NOT_VERIFIED. */
+  emailVerified?: boolean;
+  /** True when a 6-digit two-step PIN is set; login then requires it. */
+  twoFaEnabled?: boolean;
+  /** ID number typed at registration (e.g. GHA-123456789-0). */
+  idNumber?: string;
+  /** Proved by SMS OTP during registration step 1. */
+  phoneVerified?: boolean;
+  /** MoMo payout details (for receiving susu payouts). */
+  momoNumber?: string;
+  momoNetwork?: MoMoNetwork;
+  /** True when a Paystack transfer recipient exists (payouts can be sent). */
+  payoutReady?: boolean;
   reliabilityScore: number; // 0-100
   streak: number; // consecutive cycles paid on time
   penaltyDebt: number; // GHS owed in penalties
@@ -39,6 +55,12 @@ export interface GroupMember {
   streak?: number; // consecutive on-time cycles (drives StreakBadge)
   /** Removed by admin — shows a grey "Removed" chip and is blocklisted from rejoining. */
   removed?: boolean;
+  /** True only when this member's ID has actually been verified — never assume true. */
+  idVerified?: boolean;
+  /** KYC fields, returned by the backend ONLY to the group's own admin so they
+   *  can cross-check the typed number against the uploaded card photo. */
+  idNumber?: string;
+  idType?: string;
 }
 
 export interface JoinRequest {
@@ -54,6 +76,8 @@ export interface JoinRequest {
 export interface RotationEntry {
   position: number;
   memberId: string;
+  /** The User id (not the GroupMember row id) — required by PATCH .../rotation. */
+  userId: string;
   memberName: string;
   date: string; // ISO date
   amount: number;
@@ -86,6 +110,31 @@ export interface Group {
   currentRecipientId: string;
   currentRecipientName: string;
   currentRecipientAvatar?: string;
+  /** Open cycle's id, if any — needed to pay a contribution into it. */
+  currentCycleId?: string;
+  /** True when there is an open cycle accepting contributions. */
+  hasOpenCycle: boolean;
+  /** The latest closed/paid-out cycle — drives the payout banner + preview. */
+  payoutCycleId?: string;
+  payoutCycleStatus?: 'closed' | 'paid_out';
+  /** Net payout after deductions for that cycle. */
+  payoutNetAmount?: number;
+  /** True when that cycle's payout is blocked (recipient arrears). */
+  payoutCycleBlocked?: boolean;
+  /** Deduction breakdown for that cycle: pot − arrears − penalties = net. */
+  payoutPotValue?: number;
+  payoutArrears?: number;
+  payoutPenalties?: number;
+  /** True when the group has a Paystack subaccount (in-app payments enabled). */
+  hasPaymentAccount?: boolean;
+  /** The payout recipient + whether they can receive a transfer. */
+  payoutRecipient?: {
+    userId: string;
+    name: string;
+    hasMomo: boolean;
+    momoNetwork?: MoMoNetwork;
+    momoLast4?: string;
+  };
   memberCount: number;
   maxMembers: number;
   role: MemberRole;
@@ -117,6 +166,19 @@ export interface GroupPreview {
   rules: string;
 }
 
+/** A cycle row from GET /api/groups/:groupId/cycles — used by group reports. */
+export interface GroupCycle {
+  id: string;
+  cycleNumber: number;
+  status: 'open' | 'closed' | 'paid_out';
+  expectedTotal: number;
+  collectedTotal: number;
+  /** How many members contributed to this cycle. */
+  contributionCount: number;
+  startDate: string;
+  endDate: string;
+}
+
 export type ActivityType = 'payment' | 'member_joined' | 'payout_started' | 'alert';
 
 export interface ActivityItem {
@@ -145,5 +207,72 @@ export interface ContributionHistoryItem {
   amount: number;
 }
 
+/** A confirmed contribution row from GET /api/payments/history. */
+export interface PaymentHistoryItem {
+  id: string;
+  /** Owning group — lets a group-scoped screen filter this user's history. */
+  groupId: string;
+  groupName: string;
+  cycleNumber: number;
+  amount: number;
+  /** 'mobile_money' | 'card' | 'bank' | null — drives the row's method icon. */
+  method: string | null;
+  /** Paystack reference, shown when available. */
+  reference: string;
+  date: string; // ISO timestamp (created_at)
+  isArrears: boolean;
+}
+
 /** Earned streak badges — thresholds documented in StreakBadge.tsx. */
 export type StreakTier = 'reliable' | 'trusted' | 'champion';
+
+// --- Personal Susu (solo locked savings goals) -------------------------------
+
+export type PersonalGoalType = 'amount' | 'date' | 'both';
+export type PersonalGoalFrequency = 'daily' | 'weekly' | 'monthly' | 'flexible';
+export type PersonalGoalStatus = 'active' | 'completed' | 'withdrawn_early' | 'cancelled';
+
+export interface PersonalGoalContribution {
+  id: string;
+  amount: number;
+  feeAmount?: number;
+  totalCharged?: number;
+  paymentMethod?: 'momo' | 'card' | 'bank';
+  paymentDate: string;
+  note?: string;
+  createdAt: string;
+  /** Checkout was started but never confirmed — not counted in the total. */
+  pending: boolean;
+}
+
+/**
+ * A solo savings goal. The money lives in the goal's own Paystack subaccount on
+ * manual settlement, so `isUnlocked` is the real gate on collecting it — the
+ * backend re-checks it on every collect, this flag just drives the UI.
+ */
+export interface PersonalGoal {
+  id: string;
+  name: string;
+  emoji: string;
+  goalType: PersonalGoalType;
+  targetAmount?: number;
+  /** YYYY-MM-DD */
+  targetDate?: string;
+  currentAmount: number;
+  contributionAmount?: number;
+  frequency: PersonalGoalFrequency;
+  allowEarlyWithdrawal: boolean;
+  penaltyPercent: number;
+  /** False until a Paystack subaccount exists (needs the user's MoMo). */
+  hasSavingsAccount: boolean;
+  status: PersonalGoalStatus;
+  isUnlocked: boolean;
+  /** Human-readable "why still locked" lines, computed server-side. */
+  lockedReasons: string[];
+  progressPercent?: number;
+  daysRemaining?: number;
+  amountRemaining?: number;
+  withdrawalPenaltyAmount?: number;
+  createdAt?: string;
+  contributions: PersonalGoalContribution[];
+}
