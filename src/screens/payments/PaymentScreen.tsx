@@ -120,6 +120,8 @@ export default function PaymentScreen() {
         console.log(
           `[Payment] passing amount=${amount} GHS -> library sends ${Math.round(amount * 100)} pesewas`,
         );
+        console.log(`[Payment] reference=${reference} subaccount=${subaccountCode ?? '(none)'}`);
+        console.log('[Payment] calling popup.checkout — Paystack WebView logs should follow…');
       }
 
       // 2. Paystack SDK does the actual init + charge using that reference. The
@@ -165,10 +167,28 @@ export default function PaymentScreen() {
       });
     } catch (err) {
       setProcessing(false);
-      const message =
-        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-        'Could not start the payment. Please try again.';
-      Alert.alert('Payment unavailable', message);
+      const res = (err as { response?: { status?: number; data?: { error?: string; message?: string } } })
+        ?.response;
+      const code = res?.data?.error;
+      const message = res?.data?.message ?? 'Could not start the payment. Please try again.';
+
+      // /payments/initialize can refuse for reasons the personal-susu endpoint
+      // cannot (ALREADY_PAID, CYCLE_CLOSED). When it does, popup.checkout is
+      // never reached — no WebView, and none of the library's load/success
+      // logs. Naming the code makes that distinguishable from the sheet
+      // failing to open, which looks identical from the outside.
+      if (__DEV__) {
+        console.log(`[Payment] initialize FAILED — HTTP ${res?.status} ${code ?? '(no code)'}: ${message}`);
+        console.log('[Payment] checkout was not reached, so no Paystack WebView logs will follow.');
+      }
+
+      const title =
+        code === 'ALREADY_PAID'
+          ? 'Already paid'
+          : code === 'CYCLE_CLOSED'
+            ? 'Cycle closed'
+            : 'Payment unavailable';
+      Alert.alert(title, message);
     }
   };
 
