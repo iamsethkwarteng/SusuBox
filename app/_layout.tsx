@@ -42,7 +42,20 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <PaperProvider theme={paperTheme}>
-          <PaystackProvider publicKey={PAYSTACK_PUBLIC_KEY} currency="GHS" debug={__DEV__}>
+          {/* defaultChannels is REQUIRED here: the library defaults to
+              ['card'] only, so without this the checkout sheet offers no
+              mobile money option at all — unusable for a Ghanaian susu app
+              where MoMo is how everyone pays. mobile_money is listed first so
+              it is the option users land on.
+
+              In v5 channels are a PROVIDER-level setting; PaystackParams has
+              no `channels` field, so this cannot be passed per-checkout. */}
+          <PaystackProvider
+            publicKey={PAYSTACK_PUBLIC_KEY}
+            currency="GHS"
+            defaultChannels={['mobile_money', 'card', 'bank']}
+            debug={__DEV__}
+          >
             <View style={{ flex: 1 }}>
               <OfflineBanner />
               <Stack screenOptions={{ headerShown: false }}>

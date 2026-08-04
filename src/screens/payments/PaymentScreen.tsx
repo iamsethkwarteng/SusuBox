@@ -112,6 +112,16 @@ export default function PaymentScreen() {
         cycleId: group.currentCycleId,
       });
 
+      if (__DEV__) {
+        // `amount` is GHS. The library multiplies by 100 itself
+        // (utils.js: `amount: ${config.amount * 100}`), so pre-converting to
+        // pesewas here would charge 100x. These two lines make that visible.
+        console.log('[Payment] fee breakdown:', fee);
+        console.log(
+          `[Payment] passing amount=${amount} GHS -> library sends ${Math.round(amount * 100)} pesewas`,
+        );
+      }
+
       // 2. Paystack SDK does the actual init + charge using that reference. The
       // member is charged the TOTAL (contribution + fee); the split routes the
       // contribution into the group's subaccount when one is configured.
@@ -124,6 +134,13 @@ export default function PaymentScreen() {
         // subaccount itself, so no `bearer` param is needed or supported).
         ...(subaccountCode ? { subaccount: subaccountCode } : {}),
         metadata: { groupId: group.id, cycleId: group.currentCycleId, userId: user?.id },
+        // Fires when Paystack's sheet has actually rendered. The library owns
+        // the modal and shows its own spinner, so there is no overlay for us to
+        // add — this just confirms in the log that checkout opened rather than
+        // failing silently.
+        onLoad: (res) => {
+          if (__DEV__) console.log('[Payment] Paystack sheet opened:', res.accessCode);
+        },
         onSuccess: async () => {
           // 3. Record it now via verify (idempotent with the webhook), so the
           // contribution lands even when the webhook can't reach a dev server.
