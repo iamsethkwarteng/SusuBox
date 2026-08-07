@@ -22,7 +22,11 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "output": "static",
@@ -65,11 +69,18 @@
         {
           "cameraPermission": "SusuBox uses your camera for identity verification (ID card and selfie capture)."
         }
-      ]
+      ],
+      "./plugins/withFirebaseNotificationColor"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "9d753702-60cf-465c-a2ca-2185b491984a"
+      }
     }
   }
 }
