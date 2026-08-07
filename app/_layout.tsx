@@ -15,27 +15,30 @@ import { PAYSTACK_PUBLIC_KEY } from '@/src/constants/api';
 import { Colors } from '@/src/constants/colors';
 import { paperTheme } from '@/src/constants/paperTheme';
 import { useSession } from '@/src/hooks/useSession';
-import { initFCM } from '@/src/utils/initFCM';
+import { initFCM, setupNotificationTapHandler } from '@/src/utils/initFCM';
 
 export default function RootLayout() {
   // Update 6 — subscribes to the SESSION_CONFLICT event from the API client.
   const { sessionConflict, acknowledgeConflict } = useSession();
 
   useEffect(() => {
-    // initFCM() previously fetched a push token and only logged it — it was
-    // never sent to the backend, so users.fcm_token stayed null and every
-    // server-side sendFCM() call silently had nothing to push to. Register it
-    // now. NOTE: this is an Expo push token, not a raw Firebase Admin SDK
-    // token; the backend's admin.messaging().send() expects the latter, so a
-    // real push still won't deliver until the token formats are reconciled
-    // (swap to expo-server-sdk on the backend, or move to
-    // @react-native-firebase/messaging with a dev build — see the note in
-    // initFCM.ts). This fix at least closes the "token never left the device"
-    // gap; in-app notifications (the bell) already work regardless, since
-    // sendFCM always persists the Notification row before attempting a push.
+    // Fetch the push token and register it against the user, so server-side
+    // sendFCM() has somewhere to push.
+    //
+    // In an APK/dev build this is a real FCM token, which is what the
+    // backend's admin.messaging().send({ token }) expects — pushes deliver.
+    // In Expo Go it falls back to an Expo push token, which that API cannot
+    // send to; the token is still stored and the in-app bell works, because
+    // sendFCM writes the Notification row before attempting any push.
     initFCM().then((token) => {
       if (token) registerPushToken(token).catch(() => {});
     });
+
+    // Route a tapped notification to the group/goal it refers to. Registered
+    // here rather than in a screen so it survives navigation and is active
+    // when a killed app is launched by a notification.
+    const unsubscribeTap = setupNotificationTapHandler();
+    return unsubscribeTap;
   }, []);
 
   return (

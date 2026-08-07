@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "893631985055",
+    "project_id": "susubox-73260",
+    "storage_bucket": "susubox-73260.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:893631985055:android:9052381fcae1d8ae2af9aa",
+        "android_client_info": {
+          "package_name": "com.susubox.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA9keCIiZ9JM7SVADhqB9qMMPh4CeznoEU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
