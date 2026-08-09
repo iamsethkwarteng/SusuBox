@@ -6,7 +6,7 @@ import { Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { PaystackProvider } from 'react-native-paystack-webview';
 import { PaperProvider } from 'react-native-paper';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-context';
 
 import { registerPushToken } from '@/src/api/notifications';
 import OfflineBanner from '@/src/components/OfflineBanner';
@@ -43,7 +43,18 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaProvider>
+      {/* initialWindowMetrics matters specifically for the Paystack checkout.
+          Without it, insets are measured asynchronously after first paint. A
+          React Native <Modal> mounts and renders immediately, so the Paystack
+          sheet's own SafeAreaView can compute ZERO top inset on its first
+          frame and draw the WebView under the status bar — which is worse
+          under Expo SDK 54, where android edgeToEdgeEnabled is true and the
+          app deliberately draws behind the system bars.
+
+          Seeding the provider with the metrics captured at native startup
+          makes the correct inset available synchronously, on the very first
+          render, including inside modals. */}
+      <SafeAreaProvider initialMetrics={initialWindowMetrics}>
         <PaperProvider theme={paperTheme}>
           {/* defaultChannels is REQUIRED here: the library defaults to
               ['card'] only, so without this the checkout sheet offers no
