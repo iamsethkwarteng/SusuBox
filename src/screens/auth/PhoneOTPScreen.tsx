@@ -33,6 +33,10 @@ export default function PhoneOTPScreen({ phone, onVerified, onBack }: PhoneOTPSc
   const [resending, setResending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [countdown, setCountdown] = useState(RESEND_COOLDOWN_S);
+  // Set when the backend reports the code is spent (expired, not found, or the
+  // 3-attempt limit hit). Skips the remaining cooldown so the only useful
+  // action is immediately available.
+  const [forceResend, setForceResend] = useState(false);
   const inputRef = useRef<TextInput>(null);
   const submittedRef = useRef(false);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -70,12 +74,34 @@ export default function PhoneOTPScreen({ phone, onVerified, onBack }: PhoneOTPSc
       } catch (err) {
         setOtp('');
         submittedRef.current = false;
-        const data = (err as { response?: { data?: { message?: string } } })?.response?.data;
-        setError(
-          isNetworkError(err)
-            ? 'Cannot reach the server. Check your connection and try again.'
-            : (data?.message ?? 'Incorrect code. Please try again.'),
-        );
+        const data = (
+          err as {
+            response?: {
+              data?: {
+                message?: string;
+                attempts_remaining?: number;
+                request_new_code?: boolean;
+              };
+            };
+          }
+        )?.response?.data;
+
+        if (isNetworkError(err)) {
+          setError('Cannot reach the server. Check your connection and try again.');
+        } else {
+          // Vynfy allows 3 attempts per code and then the code is dead. When
+          // the backend says so, unlock Resend straight away rather than
+          // leaving the user to keep retyping a code that can never work.
+          if (data?.request_new_code) setForceResend(true);
+
+          const remaining = data?.attempts_remaining;
+          const base = data?.message ?? 'Incorrect code. Please try again.';
+          setError(
+            typeof remaining === 'number' && remaining > 0
+              ? `${base} ${remaining} attempt${remaining === 1 ? '' : 's'} remaining.`
+              : base,
+          );
+        }
         inputRef.current?.focus();
       } finally {
         setSubmitting(false);
@@ -94,13 +120,19 @@ export default function PhoneOTPScreen({ phone, onVerified, onBack }: PhoneOTPSc
   };
 
   const handleResend = async () => {
-    if (countdown > 0 || resending) return;
+    // forceResend overrides the cooldown: the current code is already dead,
+    // so making the user wait out a timer serves no purpose.
+    if ((countdown > 0 && !forceResend) || resending) return;
     setResending(true);
     setError(null);
     try {
       await resendPhoneOtp(phone);
       setOtp('');
       submittedRef.current = false;
+      // Clear the override — there is a live code again, so the cooldown
+      // applies once more. Without this, resend would stay permanently
+      // unlocked and could be spammed at Vynfy (and at your SMS bill).
+      setForceResend(false);
       startCountdown();
       Alert.alert('Code sent', 'A new verification code has been sent to your phone.');
     } catch (err) {
@@ -110,6 +142,11 @@ export default function PhoneOTPScreen({ phone, onVerified, onBack }: PhoneOTPSc
       setResending(false);
     }
   };
+
+  // Resend is blocked only while the cooldown is running AND the current code
+  // could still work. Once the backend says the code is spent, the cooldown is
+  // irrelevant — resending is the only path forward.
+  const resendLocked = countdown > 0 && !forceResend;
 
   // 024****789 — recognisable to its owner, not readable over their shoulder.
   const maskedPhone = phone.length >= 7 ? `${phone.slice(0, 3)}****${phone.slice(-3)}` : phone;
@@ -159,16 +196,16 @@ export default function PhoneOTPScreen({ phone, onVerified, onBack }: PhoneOTPSc
       {submitting ? <ActivityIndicator color={Colors.primary} style={{ marginTop: 14 }} /> : null}
 
       <TouchableOpacity
-        style={[styles.resendButton, (countdown > 0 || resending) && styles.resendDisabled]}
+        style={[styles.resendButton, (resendLocked || resending) && styles.resendDisabled]}
         onPress={handleResend}
-        disabled={countdown > 0 || resending}
+        disabled={resendLocked || resending}
         activeOpacity={0.75}
       >
         {resending ? (
           <ActivityIndicator color={Colors.primary} size="small" />
         ) : (
-          <Text style={[styles.resendText, countdown > 0 && styles.resendTextDisabled]}>
-            {countdown > 0 ? `Resend code in ${countdown}s` : 'Resend code'}
+          <Text style={[styles.resendText, resendLocked && styles.resendTextDisabled]}>
+            {resendLocked ? `Resend code in ${countdown}s` : 'Resend code'}
           </Text>
         )}
       </TouchableOpacity>
