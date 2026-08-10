@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { usePaystack } from 'react-native-paystack-webview';
@@ -50,6 +50,15 @@ export default function PaymentScreen() {
   // for the backend to confirm it. The user must be told that explicitly —
   // an unexplained spinner after a MoMo debit is genuinely frightening.
   const [confirming, setConfirming] = useState(false);
+
+  // Stops the confirmation poll if the user leaves this screen mid-wait.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // This screen used to `return null` whenever `group` was undefined, which is
   // true for the entire fetch — and forever if the fetch failed. Tapping "Pay
@@ -170,9 +179,16 @@ export default function PaymentScreen() {
           // Poll our own backend until the contribution is recorded, then
           // refresh so the screen behind is correct before the user reaches it.
           setConfirming(true);
-          const status = await waitForPaymentConfirmation(reference);
+          const status = await waitForPaymentConfirmation(reference, {
+            shouldContinue: () => mountedRef.current,
+          });
           setConfirming(false);
           setProcessing(false);
+
+          // The user left while we were polling. The webhook still settles the
+          // payment server-side; firing an Alert at a screen they have already
+          // navigated away from would be confusing, not helpful.
+          if (status === 'abandoned') return;
 
           if (status === 'failed') {
             Alert.alert(

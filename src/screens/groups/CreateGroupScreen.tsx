@@ -100,6 +100,9 @@ export default function CreateGroupScreen() {
             placeholder="Adum Market Ladies"
             value={name}
             onChangeText={setName}
+            // Matches the server cap, so the limit is felt as the field simply
+            // stopping rather than as a rejection after tapping Create.
+            maxLength={100}
             left={<TextInput.Icon icon="account-group-outline" />}
             style={styles.input}
             outlineColor={Colors.border}

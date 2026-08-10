@@ -75,10 +75,24 @@ export async function getPaymentStatus(
 // "confirming shortly" rather than anything alarming.
 export async function waitForPaymentConfirmation(
   reference: string,
-  { intervalMs = 2500, timeoutMs = 60000 }: { intervalMs?: number; timeoutMs?: number } = {},
-): Promise<PaymentStatus> {
+  {
+    intervalMs = 2500,
+    timeoutMs = 60000,
+    shouldContinue,
+  }: {
+    intervalMs?: number;
+    timeoutMs?: number;
+    /**
+     * Checked before each poll. Return false to abandon — used to stop when the
+     * screen has unmounted, so a user who backs out mid-confirmation does not
+     * get an Alert fired at them from a screen they already left.
+     */
+    shouldContinue?: () => boolean;
+  } = {},
+): Promise<PaymentStatus | 'abandoned'> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    if (shouldContinue && !shouldContinue()) return 'abandoned';
     try {
       const { status } = await getPaymentStatus(reference);
       if (status === 'success' || status === 'failed') return status;
