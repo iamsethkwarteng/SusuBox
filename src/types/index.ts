@@ -198,6 +198,8 @@ export interface AppNotification {
   body: string;
   timestamp: string;
   read: boolean;
+  /** What this notification is about, so tapping it can open that thing. */
+  data?: { groupId?: string; goalId?: string; cycleId?: string };
 }
 
 export interface ContributionHistoryItem {

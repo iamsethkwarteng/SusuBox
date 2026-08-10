@@ -172,6 +172,10 @@ export default function RegisterScreen() {
   );
 
   const goToStep = (next: number) => {
+    // Clear any error from the step being left. Without this, a failure on
+    // step 1 stayed in state and reappeared under the Create Account button on
+    // step 4 — an error about a phone number, shown against the wrong action.
+    setError(null);
     setStep(next);
     persistState({ step: next });
   };
@@ -318,6 +322,10 @@ export default function RegisterScreen() {
               onVerified={(token) => {
                 setPhoneVerificationToken(token);
                 setShowOtp(false);
+                // setStep, not goToStep, so clear the error explicitly — a
+                // failed first send followed by a successful one would
+                // otherwise carry its message onto step 2.
+                setError(null);
                 setStep(2);
                 persistState({ step: 2, phoneVerificationToken: token });
               }}
@@ -427,6 +435,14 @@ export default function RegisterScreen() {
               <Text style={styles.termsLink}>Privacy Policy</Text>.
             </Text>
 
+            {/* THE BUG. handleStep1Next set `error` correctly on every failure,
+                but the only <Text> bound to it lived inside the step 4 block —
+                so on step 1 the message had nowhere to render. The spinner
+                cleared in the finally, setShowOtp(true) was skipped, and the
+                screen simply sat there. "PHONE_TAKEN" and "a code was already
+                sent" both arrived with perfectly good copy that no one saw. */}
+            {error ? <Text style={styles.error}>{error}</Text> : null}
+
             <TouchableOpacity
               style={[styles.button, (!step1Valid || sendingOtp) && styles.buttonDisabled]}
               disabled={!step1Valid || sendingOtp}
@@ -481,6 +497,9 @@ export default function RegisterScreen() {
               }}
             />
 
+            {/* Same gap as step 1 — `error` had no renderer outside step 4. */}
+            {error ? <Text style={styles.error}>{error}</Text> : null}
+
             <TouchableOpacity
               style={[styles.button, !step2Valid && styles.buttonDisabled]}
               disabled={!step2Valid}
@@ -506,6 +525,8 @@ export default function RegisterScreen() {
                 persistState({ selfieUrl: url });
               }}
             />
+
+            {error ? <Text style={styles.error}>{error}</Text> : null}
 
             <TouchableOpacity
               style={[styles.button, !selfieUrl && styles.buttonDisabled]}

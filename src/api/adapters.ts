@@ -328,6 +328,11 @@ export interface BackendNotification {
   message: string;
   is_read: boolean;
   created_at: string;
+  // Routing payload written by sendFCM (groupId / goalId / cycleId). It was
+  // being dropped here, which is why tapping a notification inside the app went
+  // nowhere while an OS-level tap routed correctly — initFCM reads the same
+  // fields straight off the push.
+  data?: { groupId?: string; goalId?: string; cycleId?: string } | null;
 }
 
 // Backend has many granular types; the UI groups them into 6 buckets + a title.
@@ -366,6 +371,7 @@ export function mapNotification(b: BackendNotification): AppNotification {
     body: b.message,
     timestamp: relativeTime(b.created_at),
     read: b.is_read,
+    data: b.data ?? undefined,
   };
 }
 

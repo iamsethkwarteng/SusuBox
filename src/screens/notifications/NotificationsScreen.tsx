@@ -47,13 +47,37 @@ export default function NotificationsScreen() {
 
   const visible = items.filter((n) => matchesFilter(n, filter));
 
+  // Marks the row read AND opens whatever it is about.
+  //
+  // Tapping only marked it read, so an in-app notification was a dead end —
+  // "your payout is ready" told you something had happened and then left you
+  // to go and find it. A notification tapped from the OS routed correctly the
+  // whole time (initFCM reads the same groupId/goalId off the push), so the
+  // two paths disagreed depending on where the user tapped.
+  //
+  // goalId first: a personal-susu notification carries only that, while a group
+  // one carries groupId (and sometimes cycleId, which is not separately
+  // routable — the group screen shows the open cycle).
+  const openNotification = (item: AppNotification) => {
+    markRead(item.id);
+    const goalId = item.data?.goalId;
+    const groupId = item.data?.groupId;
+    if (goalId) {
+      router.push(`/personal-susu/${goalId}`);
+    } else if (groupId) {
+      router.push(`/group/${groupId}`);
+    }
+    // No routing data (a generic announcement): stay put. The row is now read,
+    // which is the whole of what the tap could mean.
+  };
+
   const renderRow = (item: AppNotification) => {
     const meta = TYPE_META[item.type];
     return (
       <TouchableOpacity
         style={[styles.row, !item.read && styles.rowUnread]}
         activeOpacity={0.7}
-        onPress={() => markRead(item.id)}
+        onPress={() => openNotification(item)}
       >
         <View style={[styles.icon, { backgroundColor: meta.bg }]}>
           <MaterialCommunityIcons name={meta.icon} size={20} color={meta.fg} />
