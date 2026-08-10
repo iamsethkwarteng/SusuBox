@@ -12,7 +12,7 @@
         "EXPO_PUBLIC_PAYSTACK_PUBLIC_KEY": "pk_live_f19919cbb3418b31f397fab12d3dbd57baa4f508",
         "EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME": "iynxmul1",
         "EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET": "Susubox_unsigned",
-        "EXPO_PUBLIC_PHONE_OTP_ENABLED": "true"
+        "EXPO_PUBLIC_PHONE_OTP_ENABLED": "false"
       }
     },
     "preview": {
@@ -22,7 +22,7 @@
         "EXPO_PUBLIC_PAYSTACK_PUBLIC_KEY": "pk_live_f19919cbb3418b31f397fab12d3dbd57baa4f508",
         "EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME": "iynxmul1",
         "EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET": "Susubox_unsigned",
-        "EXPO_PUBLIC_PHONE_OTP_ENABLED": "true"
+        "EXPO_PUBLIC_PHONE_OTP_ENABLED": "false"
       }
     },
     "production": {
@@ -32,7 +32,7 @@
         "EXPO_PUBLIC_PAYSTACK_PUBLIC_KEY": "pk_live_f19919cbb3418b31f397fab12d3dbd57baa4f508",
         "EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME": "iynxmul1",
         "EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET": "Susubox_unsigned",
-        "EXPO_PUBLIC_PHONE_OTP_ENABLED": "true"
+        "EXPO_PUBLIC_PHONE_OTP_ENABLED": "false"
       }
     }
   },

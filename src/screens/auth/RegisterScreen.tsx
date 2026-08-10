@@ -208,9 +208,23 @@ export default function RegisterScreen() {
       return;
     }
 
-    // HUBTEL PENDING: with SMS off, no code could ever arrive, so step 1 goes
-    // straight to step 2. The backend skips its matching check while
-    // PHONE_OTP_ENABLED=false, and those accounts keep phone_verified: false.
+    // OTP DISABLED — Vynfy's queue is stuck provider-side (sends are accepted,
+    // issued an otp_id, and never leave "processing"), so no code can arrive
+    // and the step would be an unpassable wall.
+    //
+    // This returns BEFORE setSendingOtp(true) and before sendPhoneOtp(), so
+    // with the flag off the app never enters a loading state and never calls
+    // /otp/send at all. That is deliberate: the backend's own flag would let a
+    // call through harmlessly, but a request the user cannot benefit from
+    // should not be made in the first place — it costs a round trip on a slow
+    // connection and is one more thing that can hang or error.
+    //
+    // setShowOtp(true) lives inside the try below, after this guard, so the
+    // OTP screen is structurally unreachable while the flag is off — not
+    // rendered and then dismissed.
+    //
+    // Accounts created this way keep phone_verified: false, which is accurate:
+    // the number genuinely was not verified.
     if (!PHONE_OTP_ENABLED) {
       goToStep(2);
       return;
