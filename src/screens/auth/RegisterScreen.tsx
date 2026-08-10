@@ -36,6 +36,11 @@ const TOTAL_STEPS = 4;
 // contains PII + the password; cleared on success or "Start over".
 const REG_STATE_KEY = 'susubox_registration_state';
 
+// The server issues phone-verification tokens with a 1-hour life. Treat one as
+// spent slightly early so a token that passes the check here cannot expire in
+// the minutes it takes to photograph an ID and take a selfie.
+const PHONE_TOKEN_TTL_MS = 55 * 60 * 1000;
+
 interface SavedRegistrationState {
   step: number;
   name: string;
@@ -48,6 +53,13 @@ interface SavedRegistrationState {
   selfieUrl: string | null;
   /** Proof the phone was OTP-verified; the register call is refused without it. */
   phoneVerificationToken: string;
+  /**
+   * When that token was issued. The server gives it a 1-hour life, and this
+   * draft can sit in SecureStore for days — so without a timestamp we cannot
+   * tell a usable token from a dead one, and a dead one silently skips the OTP
+   * step and then fails at Create Account, after the ID and selfie are done.
+   */
+  phoneVerifiedAt?: number;
   /**
    * Whether the OTP prompt was on screen. This HAS to be persisted: the code
    * arrives by SMS, so the flow requires the user to leave the app to read it,
@@ -136,7 +148,18 @@ export default function RegisterScreen() {
           // Older drafts (saved before the ID number field existed) have no
           // idNumber — default it rather than writing `undefined` into state.
           setIdNumber(saved.idNumber ?? '');
-          setPhoneVerificationToken(saved.phoneVerificationToken ?? '');
+          // A restored token is only trusted while it is still alive. An
+          // expired one would skip the OTP screen and then be rejected at
+          // registration with PHONE_VERIFICATION_EXPIRED — after the user had
+          // already done ID capture, the selfie and the T&Cs. Dropping it here
+          // sends them back through a 30-second OTP instead.
+          const savedToken = saved.phoneVerificationToken ?? '';
+          const issuedAt = saved.phoneVerifiedAt ?? 0;
+          const tokenAlive = Boolean(savedToken) && Date.now() - issuedAt < PHONE_TOKEN_TTL_MS;
+          if (savedToken && !tokenAlive) {
+            console.log('[Register] Stored phone token has expired — OTP will be required again.');
+          }
+          setPhoneVerificationToken(tokenAlive ? savedToken : '');
           setIdImageUrl(saved.idImageUrl);
           setSelfieUrl(saved.selfieUrl);
           setStep(saved.step);
@@ -240,13 +263,27 @@ export default function RegisterScreen() {
     // Accounts created this way keep phone_verified: false, which is accurate:
     // the number genuinely was not verified.
     if (!PHONE_OTP_ENABLED) {
+      if (__DEV__) {
+        // EXPO_PUBLIC_* is inlined when Metro starts, so this reflects the
+        // bundle, not the current .env. Seeing `false` here after setting it
+        // to true means the bundler was not restarted with --clear.
+        console.log(
+          '[Register] OTP DISABLED in this bundle (EXPO_PUBLIC_PHONE_OTP_ENABLED=' +
+            String(process.env.EXPO_PUBLIC_PHONE_OTP_ENABLED) +
+            ') — skipping to ID capture without calling /otp/send.',
+        );
+      }
       goToStep(2);
       return;
     }
 
     // Already verified this exact number in this session (e.g. user stepped
-    // back from step 2): don't spend another SMS.
+    // back from step 2): don't spend another SMS. Only a token that survived
+    // the freshness check on restore reaches this point.
     if (phoneVerificationToken) {
+      if (__DEV__) {
+        console.log('[Register] Skipping OTP — a live phone token is already held.');
+      }
       goToStep(2);
       return;
     }
@@ -364,7 +401,12 @@ export default function RegisterScreen() {
                 // otherwise carry its message onto step 2.
                 setError(null);
                 setStep(2);
-                persistState({ step: 2, phoneVerificationToken: token, showOtp: false });
+                persistState({
+                  step: 2,
+                  phoneVerificationToken: token,
+                  phoneVerifiedAt: Date.now(),
+                  showOtp: false,
+                });
               }}
               onBack={() => {
                 setShowOtp(false);
