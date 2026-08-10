@@ -7,6 +7,7 @@ export default function AuthLayout() {
       <Stack.Screen name="onboarding" />
       <Stack.Screen name="login" />
       <Stack.Screen name="register" />
+      <Stack.Screen name="forgot-password" />
       {/* Gesture disabled: an unverified user must not be able to swipe back
           into the registration flow they have already completed. */}
       <Stack.Screen name="verify-email" options={{ gestureEnabled: false }} />

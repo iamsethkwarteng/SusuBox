@@ -117,6 +117,16 @@ export async function getVerificationStatus(): Promise<{ emailVerified: boolean;
   return { emailVerified: data.email_verified, user: mapUser(data.user) };
 }
 
+// POST /api/auth/forgot-password — asks for a reset link to be emailed.
+//
+// The server answers identically whether or not the address is registered, so
+// there is nothing here to branch on and nothing to report back beyond "sent".
+// Resolving without a result is deliberate: any success/failure distinction the
+// UI could show would leak exactly what the endpoint refuses to.
+export async function requestPasswordReset(email: string): Promise<void> {
+  await apiClient.post(ENDPOINTS.auth.forgotPassword, { email: email.trim().toLowerCase() });
+}
+
 // POST /api/auth/resend-verification — issues a new token and mails a new link,
 // invalidating the previous one.
 export async function resendVerificationEmail(): Promise<void> {

@@ -29,6 +29,9 @@ export const ENDPOINTS = {
     me: '/auth/me',
     resendVerification: '/auth/resend-verification',
     verificationStatus: '/auth/verification-status',
+    // The reset link itself is opened in a browser from the user's inbox; the
+    // app only ever asks for one to be sent.
+    forgotPassword: '/auth/forgot-password',
   },
   groups: {
     list: '/groups',

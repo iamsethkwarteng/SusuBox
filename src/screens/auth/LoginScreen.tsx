@@ -165,6 +165,16 @@ export default function LoginScreen() {
           activeOutlineColor={Colors.primary}
         />
 
+        {/* Directly under the password field, which is where a user looks the
+            moment the one they tried did not work. */}
+        <TouchableOpacity
+          style={styles.forgotRow}
+          onPress={() => router.push('/(auth)/forgot-password')}
+          hitSlop={8}
+        >
+          <Text style={styles.forgotLink}>Forgot password?</Text>
+        </TouchableOpacity>
+
         {error ? <Text style={styles.error}>{error}</Text> : null}
 
         <TouchableOpacity
@@ -258,6 +268,8 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surface,
     marginBottom: 16,
   },
+  forgotRow: { alignSelf: 'flex-end', marginTop: -4, marginBottom: 18 },
+  forgotLink: { fontSize: 13, color: Colors.primary, fontWeight: '600' },
   error: {
     color: Colors.danger,
     fontSize: 13,
