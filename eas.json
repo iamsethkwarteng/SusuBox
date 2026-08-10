@@ -9,7 +9,7 @@
       "distribution": "internal",
       "env": {
         "EXPO_PUBLIC_API_URL": "https://susubox-api-u1rg.onrender.com/api",
-        "EXPO_PUBLIC_PAYSTACK_PUBLIC_KEY": "pk_test_c8a2486e5f8d44bc73bdb4552beb2d3ab1ab43da",
+        "EXPO_PUBLIC_PAYSTACK_PUBLIC_KEY": "pk_live_f19919cbb3418b31f397fab12d3dbd57baa4f508",
         "EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME": "iynxmul1",
         "EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET": "Susubox_unsigned",
         "EXPO_PUBLIC_PHONE_OTP_ENABLED": "true"
@@ -19,7 +19,7 @@
       "distribution": "internal",
       "env": {
         "EXPO_PUBLIC_API_URL": "https://susubox-api-u1rg.onrender.com/api",
-        "EXPO_PUBLIC_PAYSTACK_PUBLIC_KEY": "pk_test_c8a2486e5f8d44bc73bdb4552beb2d3ab1ab43da",
+        "EXPO_PUBLIC_PAYSTACK_PUBLIC_KEY": "pk_live_f19919cbb3418b31f397fab12d3dbd57baa4f508",
         "EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME": "iynxmul1",
         "EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET": "Susubox_unsigned",
         "EXPO_PUBLIC_PHONE_OTP_ENABLED": "true"
@@ -29,7 +29,7 @@
       "autoIncrement": true,
       "env": {
         "EXPO_PUBLIC_API_URL": "https://susubox-api-u1rg.onrender.com/api",
-        "EXPO_PUBLIC_PAYSTACK_PUBLIC_KEY": "pk_test_c8a2486e5f8d44bc73bdb4552beb2d3ab1ab43da",
+        "EXPO_PUBLIC_PAYSTACK_PUBLIC_KEY": "pk_live_f19919cbb3418b31f397fab12d3dbd57baa4f508",
         "EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME": "iynxmul1",
         "EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET": "Susubox_unsigned",
         "EXPO_PUBLIC_PHONE_OTP_ENABLED": "true"
