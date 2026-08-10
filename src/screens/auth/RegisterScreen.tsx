@@ -48,6 +48,16 @@ interface SavedRegistrationState {
   selfieUrl: string | null;
   /** Proof the phone was OTP-verified; the register call is refused without it. */
   phoneVerificationToken: string;
+  /**
+   * Whether the OTP prompt was on screen. This HAS to be persisted: the code
+   * arrives by SMS, so the flow requires the user to leave the app to read it,
+   * and Android routinely reclaims the activity while they are in Messages.
+   * Everything else survived that round trip; this did not, so the OTP screen
+   * vanished and the user came back to the Step 1 form — with a live code they
+   * had no way to enter, and a resend the provider refuses because one OTP is
+   * already pending for that number.
+   */
+  showOtp?: boolean;
 }
 
 function StepHeader({ step, label, onBack }: { step: number; label?: string; onBack?: () => void }) {
@@ -130,6 +140,10 @@ export default function RegisterScreen() {
           setIdImageUrl(saved.idImageUrl);
           setSelfieUrl(saved.selfieUrl);
           setStep(saved.step);
+          // Only restore the OTP prompt when it is still the right thing to
+          // show: on step 1, and not already verified. Otherwise a stale flag
+          // could put the prompt in front of someone who is past it.
+          setShowOtp(Boolean(saved.showOtp) && saved.step === 1 && !saved.phoneVerificationToken);
           setShowResumeBanner(true);
         }
       } catch {
@@ -242,6 +256,9 @@ export default function RegisterScreen() {
     try {
       await sendPhoneOtp(cleaned);
       setShowOtp(true);
+      // Persisted immediately: the user is about to leave for their SMS app,
+      // which is exactly when the activity gets reclaimed.
+      persistState({ showOtp: true });
     } catch (err) {
       const data = (err as { response?: { data?: { message?: string } } })?.response?.data;
       setError(
@@ -330,7 +347,13 @@ export default function RegisterScreen() {
             the user has not completed identity capture yet. */}
         {step === 1 && showOtp && (
           <>
-            <StepHeader step={1} onBack={() => setShowOtp(false)} />
+            <StepHeader
+              step={1}
+              onBack={() => {
+                setShowOtp(false);
+                persistState({ showOtp: false });
+              }}
+            />
             <PhoneOTPScreen
               phone={phone.replace(/[\s\-()]/g, '')}
               onVerified={(token) => {
@@ -341,9 +364,12 @@ export default function RegisterScreen() {
                 // otherwise carry its message onto step 2.
                 setError(null);
                 setStep(2);
-                persistState({ step: 2, phoneVerificationToken: token });
+                persistState({ step: 2, phoneVerificationToken: token, showOtp: false });
               }}
-              onBack={() => setShowOtp(false)}
+              onBack={() => {
+                setShowOtp(false);
+                persistState({ showOtp: false });
+              }}
             />
           </>
         )}
