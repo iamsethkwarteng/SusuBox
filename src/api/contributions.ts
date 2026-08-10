@@ -49,6 +49,47 @@ export async function verifyPayment(reference: string): Promise<{ status: 'succe
   return data;
 }
 
+export type PaymentStatus = 'pending' | 'success' | 'failed';
+
+// GET /api/payments/status/:reference — reads the backend's own record, no
+// Paystack round trip. Safe to poll.
+export async function getPaymentStatus(
+  reference: string,
+): Promise<{ status: PaymentStatus; amount?: number }> {
+  const { data } = await apiClient.get<{ status: PaymentStatus; amount?: number }>(
+    ENDPOINTS.payments.status(reference),
+  );
+  return data;
+}
+
+// Polls until the contribution is recorded, the payment is rejected, or we run
+// out of patience.
+//
+// Needed because checkout's onSuccess is NOT confirmation. With mobile money
+// the sheet closes as soon as the user approves on their handset, seconds
+// before Paystack settles and the webhook fires. Refreshing the group at that
+// moment showed the member still unpaid — money gone, screen unchanged — which
+// is the single most alarming thing a savings app can do.
+//
+// A timeout is not a failure: the webhook will still land. The caller says
+// "confirming shortly" rather than anything alarming.
+export async function waitForPaymentConfirmation(
+  reference: string,
+  { intervalMs = 2500, timeoutMs = 60000 }: { intervalMs?: number; timeoutMs?: number } = {},
+): Promise<PaymentStatus> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const { status } = await getPaymentStatus(reference);
+      if (status === 'success' || status === 'failed') return status;
+    } catch {
+      // A dropped poll is not an answer — keep trying until the deadline.
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return 'pending';
+}
+
 // GET /api/payments/history → { message, contributions: [...] }
 // Returns the current user's confirmed contributions, newest first, mapped to
 // the frontend display shape.

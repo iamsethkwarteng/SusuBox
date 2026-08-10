@@ -27,6 +27,7 @@ import IDCaptureScreen, {
 } from '@/src/screens/auth/IDCaptureScreen';
 import PhoneOTPScreen from '@/src/screens/auth/PhoneOTPScreen';
 import SelfieScreen from '@/src/screens/auth/SelfieScreen';
+import { validatePassword } from '@/src/utils/validatePassword';
 
 const TOTAL_STEPS = 4;
 
@@ -235,8 +236,14 @@ export default function RegisterScreen() {
     }
   };
 
+  // Mirrors the server policy, so a password that passes here is one the
+  // register call will accept. Previously the only client rule was length >= 8,
+  // and anything else the server refused surfaced as a failure at the END of a
+  // four-step flow — after ID capture and the OTP.
+  const passwordCheck = validatePassword(password, { email, phone, full_name: name });
+
   const step1Valid =
-    name.trim().length > 1 && phone.trim().length >= 9 && email.includes('@') && password.length >= 8;
+    name.trim().length > 1 && phone.trim().length >= 9 && email.includes('@') && passwordCheck.valid;
 
   // Step 2 now needs BOTH the card photo and a well-formed ID number.
   const step2Valid = Boolean(idImageUrl) && validateIDNumber(idNumber, documentType) === null;
@@ -381,6 +388,39 @@ export default function RegisterScreen() {
               outlineColor={Colors.border}
               activeOutlineColor={Colors.primary}
             />
+
+            {/* Only once they have started typing — showing a red bar and a
+                list of demands on an untouched field is hostile. */}
+            {password.length > 0 && (
+              <View style={styles.strengthWrap}>
+                <View style={styles.strengthTrack}>
+                  {[0, 1, 2, 3].map((i) => (
+                    <View
+                      key={i}
+                      style={[
+                        styles.strengthSegment,
+                        i < passwordCheck.score && {
+                          backgroundColor: passwordCheck.valid
+                            ? passwordCheck.score >= 4
+                              ? Colors.success
+                              : Colors.primary
+                            : Colors.danger,
+                        },
+                      ]}
+                    />
+                  ))}
+                </View>
+                <Text
+                  style={[
+                    styles.strengthLabel,
+                    { color: passwordCheck.valid ? Colors.textSecondary : Colors.danger },
+                  ]}
+                >
+                  {passwordCheck.label}
+                  {passwordCheck.errors.length > 0 ? ` — needs: ${passwordCheck.errors.join(', ')}` : ''}
+                </Text>
+              </View>
+            )}
 
             <Text style={styles.terms}>
               By tapping Next, you agree to our <Text style={styles.termsLink}>Terms of Service</Text> and{' '}
@@ -635,6 +675,16 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surface,
     marginBottom: 16,
   },
+  // Password strength meter — four segments, filled to `score`.
+  strengthWrap: { marginTop: -8, marginBottom: 16, gap: 6 },
+  strengthTrack: { flexDirection: 'row', gap: 4 },
+  strengthSegment: {
+    flex: 1,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: Colors.divider,
+  },
+  strengthLabel: { fontSize: 11.5, lineHeight: 16 },
   terms: {
     fontSize: 12,
     color: Colors.textSecondary,

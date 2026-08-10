@@ -48,6 +48,9 @@ export const ENDPOINTS = {
   payments: {
     initialize: '/payments/initialize',
     verify: (reference: string) => `/payments/verify/${reference}`,
+    // Cheap poll target — reads the backend's own record, so it can be called
+    // every couple of seconds while a mobile money confirmation settles.
+    status: (reference: string) => `/payments/status/${reference}`,
     history: '/payments/history',
     payout: '/payments/payout',
     subaccount: (groupId: string) => `/payments/subaccount/${groupId}`,

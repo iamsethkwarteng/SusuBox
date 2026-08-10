@@ -106,6 +106,40 @@ function channelFor(type?: string): string {
   return 'default';
 }
 
+// Shows a notification from the device itself, with no server round trip.
+//
+// The backend already sends a push on contribution_confirmed, but that push is
+// the least reliable link in the chain: it needs a valid FCM token, granted
+// permission, and a webhook that has already fired. The one moment a user most
+// needs a durable record is right after money has left their MoMo wallet — so
+// the app raises its own confirmation the instant the backend says the
+// contribution is recorded.
+//
+// Duplicating the server push is a deliberate trade: two notifications is a
+// minor annoyance, none at all after a payment is not.
+export async function showLocalNotification(
+  title: string,
+  body: string,
+  data: Record<string, unknown> = {},
+  type?: string,
+): Promise<void> {
+  try {
+    await ensureAndroidChannels();
+    await Notifications.scheduleNotificationAsync({
+      content: { title, body, data, sound: true },
+      // The channel goes on the TRIGGER, not the content — NotificationContentInput
+      // has no channelId field, so putting it there is silently dropped and the
+      // notification lands on 'default' regardless. ChannelAwareTriggerInput
+      // ({ channelId }) still delivers immediately, exactly like `null`.
+      trigger: Platform.OS === 'android' ? { channelId: channelFor(type) } : null,
+    });
+  } catch (error) {
+    // Never let a notification failure break the payment flow that called it —
+    // the money has already moved and the screen must still update.
+    console.log('[initFCM] Local notification failed:', error);
+  }
+}
+
 export async function requestUserPermission(): Promise<boolean> {
   if (!Device.isDevice) {
     console.log('[initFCM] Push notifications require a physical device.');
@@ -182,9 +216,12 @@ export function onForegroundMessage(
             body: remoteMessage?.notification?.body ?? '',
             data: remoteMessage?.data ?? {},
             sound: true,
-            ...(Platform.OS === 'android' ? { channelId: channelFor(type) } : {}),
           },
-          trigger: null,
+          // channelId belongs on the trigger — see showLocalNotification. It was
+          // in `content` here, where expo-notifications ignores it, so every
+          // foreground push landed on 'default' and the payments/reminders split
+          // the channels exist for did not actually apply.
+          trigger: Platform.OS === 'android' ? { channelId: channelFor(type) } : null,
         });
       } catch (error) {
         console.log('[initFCM] Could not present foreground notification:', error);

@@ -17,6 +17,7 @@ import { isNetworkError } from '@/src/api/client';
 import { createGroup } from '@/src/api/groups';
 import { Colors } from '@/src/constants/colors';
 import { useAuth } from '@/src/hooks/useAuth';
+import { refreshGroups } from '@/src/hooks/useGroups';
 import type { GroupFrequency } from '@/src/types';
 
 export default function CreateGroupScreen() {
@@ -51,6 +52,17 @@ export default function CreateGroupScreen() {
         gracePeriodDays: Number(gracePeriod) || 3,
         rules: rules.trim() || undefined,
       });
+      // Pull the new group into the shared list BEFORE navigating. useGroups
+      // holds module-level state that is fetched once at bootstrap and never
+      // again, so without this the group the user just created was missing from
+      // the Groups tab until they pulled to refresh — which reads as a failed
+      // creation even though the server accepted it.
+      //
+      // Deliberately not awaited: the confirmation screen should appear at
+      // once, and the refetch has landed long before the user backs out of it.
+      // Silent so it cannot blank the list if this one request fails.
+      refreshGroups({ silent: true }).catch(() => {});
+
       router.replace({
         pathname: '/group/created',
         params: { groupId: group.id, groupName: group.name, inviteCode: group.inviteCode },

@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { router, useLocalSearchParams } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -55,6 +55,27 @@ export default function GroupDetailScreen() {
   const { group, isLoading, error, refresh } = useGroupDetail(id);
   const { user } = useAuth();
   const currentUserId = user?.id;
+
+  // Refetch whenever this screen comes back into focus — most importantly on
+  // return from the payment screen, so the member who just paid is shown as
+  // paid and the cycle total has moved. The payment screen refreshes before
+  // navigating back, but this covers every other way state changes while the
+  // user is elsewhere (another member pays, the admin closes the cycle).
+  //
+  // useGroupDetail keeps the previous group while refetching, so this does not
+  // flash a skeleton over data already on screen.
+  const isFirstFocus = useRef(true);
+  useFocusEffect(
+    useCallback(() => {
+      // useGroupDetail already fetches on mount; skipping the first focus
+      // avoids firing the same request twice on every open.
+      if (isFirstFocus.current) {
+        isFirstFocus.current = false;
+        return;
+      }
+      return refresh();
+    }, [refresh]),
+  );
   const [tab, setTab] = useState<Tab>('current');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [selectedMember, setSelectedMember] = useState<GroupMember | null>(null);

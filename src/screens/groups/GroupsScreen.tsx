@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { router } from 'expo-router';
-import React, { useState } from 'react';
+import { router, useFocusEffect } from 'expo-router';
+import React, { useCallback, useState } from 'react';
 import { FlatList, Modal, RefreshControl, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -9,13 +9,26 @@ import ErrorState from '@/src/components/ErrorState';
 import GroupCard from '@/src/components/GroupCard';
 import { GroupCardSkeleton } from '@/src/components/SkeletonLoader';
 import { Colors } from '@/src/constants/colors';
-import { useGroups } from '@/src/hooks/useGroups';
+import { refreshGroups, useGroups } from '@/src/hooks/useGroups';
 import type { Group } from '@/src/types';
 
 export default function GroupsScreen() {
   const { groups, isLoading, error, refresh } = useGroups();
   // FAB bottom sheet: "Create a group" or "Join a group".
   const [sheetVisible, setSheetVisible] = useState(false);
+
+  // Reconcile whenever the tab regains focus. useGroups fetches once at
+  // bootstrap and then holds module-level state, so anything that changed
+  // elsewhere — a join request approved, a group left, a contribution paid —
+  // stayed invisible here until the user thought to pull down.
+  //
+  // Silent: no spinner, and a failure leaves the current list alone rather
+  // than replacing it with an error the user did nothing to cause.
+  useFocusEffect(
+    useCallback(() => {
+      refreshGroups({ silent: true }).catch(() => {});
+    }, []),
+  );
 
   const openGroup = (group: Group) => router.push(`/group/${group.id}`);
   const goCreate = () => {

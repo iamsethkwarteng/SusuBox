@@ -8,12 +8,17 @@ import { usePaystack } from 'react-native-paystack-webview';
 import AvatarInitials from '@/src/components/AvatarInitials';
 import ErrorState from '@/src/components/ErrorState';
 import { showToast } from '@/src/components/Toast';
-import { initializePayment, verifyPayment } from '@/src/api/contributions';
+import {
+  initializePayment,
+  verifyPayment,
+  waitForPaymentConfirmation,
+} from '@/src/api/contributions';
 import { Colors } from '@/src/constants/colors';
 import { useAuth } from '@/src/hooks/useAuth';
-import { useGroupDetail } from '@/src/hooks/useGroups';
+import { refreshGroups, useGroupDetail } from '@/src/hooks/useGroups';
 import { calculatePaystackFee } from '@/src/utils/calculatePaystackFee';
 import { formatCurrency } from '@/src/utils/formatCurrency';
+import { showLocalNotification } from '@/src/utils/initFCM';
 
 // Shared header so the loading, error and empty states keep the back button —
 // otherwise a failed load would strand the user in a modal with no way out.
@@ -41,6 +46,10 @@ export default function PaymentScreen() {
   const { group, isLoading, error, refresh } = useGroupDetail(groupId);
   const { popup } = usePaystack();
   const [processing, setProcessing] = useState(false);
+  // Distinct from `processing`: the charge has gone through and we are waiting
+  // for the backend to confirm it. The user must be told that explicitly —
+  // an unexplained spinner after a MoMo debit is genuinely frightening.
+  const [confirming, setConfirming] = useState(false);
 
   // This screen used to `return null` whenever `group` was undefined, which is
   // true for the entire fetch — and forever if the fetch failed. Tapping "Pay
@@ -151,11 +160,58 @@ export default function PaymentScreen() {
           } catch {
             showToast('Payment received — confirming shortly');
           }
+
+          // 4. onSuccess is NOT confirmation. With mobile money the sheet closes
+          // as soon as the user approves on their handset — Paystack settles
+          // seconds later and the webhook is what makes the contribution real.
+          // Navigating back at this point showed the member still marked unpaid
+          // on the group screen, with their money already gone.
+          //
+          // Poll our own backend until the contribution is recorded, then
+          // refresh so the screen behind is correct before the user reaches it.
+          setConfirming(true);
+          const status = await waitForPaymentConfirmation(reference);
+          setConfirming(false);
           setProcessing(false);
+
+          if (status === 'failed') {
+            Alert.alert(
+              'Payment not completed',
+              'Your payment could not be confirmed. If you were debited, it will be reversed — ' +
+                'contact support if it is not back within 24 hours.',
+            );
+            return;
+          }
+
+          // Refresh both the detail (this member now shows as paid) and the
+          // shared list (the group card total moves). Awaited so the screen the
+          // user lands on is already correct rather than updating under them.
+          await Promise.all([
+            Promise.resolve(refresh()),
+            refreshGroups({ silent: true }).catch(() => {}),
+          ]);
+
+          if (status === 'success') {
+            // A durable record of the payment on the device itself. The backend
+            // also sends a push and an emailed receipt, but both depend on the
+            // webhook and a valid token — and this is the moment a user most
+            // needs proof that their money arrived somewhere.
+            showLocalNotification(
+              'Contribution confirmed',
+              `${formatCurrency(group.contributionAmount)} paid to ${group.name} · Cycle ${group.cycle}. A receipt has been emailed to you.`,
+              { groupId: group.id, cycleId: group.currentCycleId, type: 'contribution_confirmed' },
+              'contribution_confirmed',
+            );
+          }
+
           Alert.alert(
-            'Payment successful',
-            // Record/confirm the CONTRIBUTION amount, not the total charged.
-            `${formatCurrency(group.contributionAmount)} contributed to ${group.name} ✓`,
+            status === 'success' ? 'Payment successful' : 'Payment received',
+            status === 'success'
+              ? // Confirm the CONTRIBUTION amount, not the total charged.
+                `${formatCurrency(group.contributionAmount)} contributed to ${group.name} ✓\n\nA receipt has been sent to ${user?.email ?? 'your email'}.`
+              : // Still pending after the timeout. The webhook will finish the
+                // job — say so plainly rather than implying anything is wrong.
+                `${formatCurrency(group.contributionAmount)} received. It is taking a little longer than usual to confirm — your group will update shortly and you will get a receipt by email.`,
             [{ text: 'Done', onPress: () => router.back() }],
           );
         },
@@ -243,6 +299,17 @@ export default function PaymentScreen() {
             <Text style={styles.payLabel}>Pay {fee.total_display} via MoMo</Text>
           )}
         </TouchableOpacity>
+
+        {/* Names what the wait is for. Without this the user sits on a spinner
+            straight after being debited with no idea whether it worked. */}
+        {confirming && (
+          <View style={styles.confirmingRow}>
+            <ActivityIndicator color={Colors.primary} size="small" />
+            <Text style={styles.confirmingText}>
+              Payment received — confirming with your group. Please don&apos;t close the app.
+            </Text>
+          </View>
+        )}
         <Text style={styles.directNote}>
           Your payment goes directly into the group&apos;s secure account. SusuBox does not hold your money.
         </Text>
@@ -335,6 +402,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   payLabel: { color: Colors.white, fontSize: 16, fontWeight: '700' },
+  confirmingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: Colors.primaryLight,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  confirmingText: { flex: 1, fontSize: 12, color: Colors.primaryDark, lineHeight: 17 },
   securedByRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   securedByText: { fontSize: 11, color: Colors.textMuted, letterSpacing: 0.5, fontWeight: '700' },
 });

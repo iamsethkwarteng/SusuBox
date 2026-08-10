@@ -21,9 +21,12 @@ function setState(next: Partial<GroupsState>) {
   listeners.forEach((listener) => listener(state));
 }
 
-async function load(): Promise<void> {
+// `silent` refetches without flipping isLoading. The list screen's
+// RefreshControl is driven by isLoading, so a background reconcile would
+// otherwise yank a spinner down every time the tab regains focus.
+async function load(silent = false): Promise<void> {
   if (inFlight) return inFlight;
-  setState({ isLoading: true, error: null });
+  if (!silent) setState({ isLoading: true, error: null });
   inFlight = (async () => {
     try {
       const data = await fetchGroups();
@@ -33,11 +36,19 @@ async function load(): Promise<void> {
     } catch {
       // Never fall back to sample data: showing a real user fake groups is
       // worse than an honest error they can retry.
-      setState({
-        groups: [],
-        error: 'Could not load your groups. Please check your connection.',
-        isLoading: false,
-      });
+      //
+      // A failed SILENT refresh keeps whatever is on screen. Blanking a list
+      // the user is already looking at because a background reconcile hit a
+      // dropped connection would read as "my groups are gone".
+      if (silent) {
+        setState({ isLoading: false });
+      } else {
+        setState({
+          groups: [],
+          error: 'Could not load your groups. Please check your connection.',
+          isLoading: false,
+        });
+      }
     } finally {
       inFlight = null;
     }
@@ -46,6 +57,15 @@ async function load(): Promise<void> {
 }
 
 let bootstrapped = false;
+
+// Callable from outside React — used by the create and join flows, which
+// navigate away the instant they succeed and so have no component left to
+// trigger a refetch from. Without this the new group did not appear on the
+// Groups tab until the user pulled to refresh, which made a successful
+// creation look like it had failed.
+export function refreshGroups(options: { silent?: boolean } = {}): Promise<void> {
+  return load(options.silent ?? false);
+}
 
 interface UseGroupsResult {
   groups: Group[];
