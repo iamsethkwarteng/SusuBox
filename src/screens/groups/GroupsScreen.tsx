@@ -81,14 +81,16 @@ export default function GroupsScreen() {
           ListEmptyComponent={
             // A brand new user legitimately has zero groups — this is the
             // correct outcome, never a reason to show sample groups.
+            //
+            // No action buttons here on purpose. ListHeaderComponent already
+            // renders "Create a Group" and "Join with Invite Code" directly
+            // above this, so an empty screen was showing the same two choices
+            // twice, a few pixels apart. The message alone is enough; the
+            // buttons to act on it are already on screen.
             <EmptyState
               icon="account-group-outline"
               title="You have no groups yet"
               subtitle="Create your own susu circle or join one with an invite code from a friend."
-              actionLabel="Create a Group"
-              onAction={goCreate}
-              secondaryActionLabel="Join a Group"
-              onSecondaryAction={goJoin}
             />
           }
         />
