@@ -327,7 +327,16 @@ export interface BackendNotification {
   type: string;
   message: string;
   is_read: boolean;
-  created_at: string;
+  /**
+   * Sequelize keeps its timestamp ATTRIBUTES camelCase even under
+   * `underscored: true` — that option renames the database column, not the
+   * model attribute. These rows are serialised straight from the model, so the
+   * wire field is `createdAt`. Reading `created_at` produced undefined, and
+   * `new Date(undefined)` is an Invalid Date. Both spellings are accepted so a
+   * future serialiser change cannot silently reintroduce this.
+   */
+  createdAt?: string;
+  created_at?: string;
   // Routing payload written by sendFCM (groupId / goalId / cycleId). It was
   // being dropped here, which is why tapping a notification inside the app went
   // nowhere while an OS-level tap routed correctly — initFCM reads the same
@@ -351,8 +360,20 @@ const NOTIF_TYPE_MAP: Record<string, { type: NotificationType; title: string }> 
   info: { type: 'info', title: 'SusuBox' },
 };
 
-function relativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
+function relativeTime(iso: string | null | undefined): string {
+  // Guard first. Every comparison against NaN is false, so an unparseable date
+  // fell through every branch below and landed on the last one — which is how
+  // "NaN days ago" reached the screen instead of anything recognisable as an
+  // error. A missing timestamp is not worth breaking a row over: say "Just now"
+  // and move on.
+  if (!iso) return 'Just now';
+  const ms = new Date(iso).getTime();
+  if (!Number.isFinite(ms)) return 'Just now';
+
+  const diff = Date.now() - ms;
+  // Clock skew between the device and the server can put a fresh row very
+  // slightly in the future; that is "Just now", not a negative age.
+  if (diff < 0) return 'Just now';
   const mins = Math.round(diff / 60000);
   if (mins < 1) return 'Just now';
   if (mins < 60) return `${mins}m ago`;
@@ -369,7 +390,7 @@ export function mapNotification(b: BackendNotification): AppNotification {
     type: meta.type,
     title: meta.title,
     body: b.message,
-    timestamp: relativeTime(b.created_at),
+    timestamp: relativeTime(b.createdAt ?? b.created_at),
     read: b.is_read,
     data: b.data ?? undefined,
   };
@@ -385,7 +406,9 @@ export interface BackendContributionRow {
   paystack_reference?: string | null;
   payment_method?: string | null;
   is_arrears?: boolean;
-  created_at: string;
+  /** camelCase on the wire — see the note on BackendNotification. */
+  createdAt?: string;
+  created_at?: string;
   cycle?: { id: string; cycle_number: number; group_id: string } | null;
   group?: { id: string; name: string; frequency?: string } | null;
 }
@@ -399,7 +422,7 @@ export function mapPaymentHistory(b: BackendContributionRow): PaymentHistoryItem
     amount: num(b.amount),
     method: b.payment_method ?? null,
     reference: b.paystack_reference ?? '',
-    date: b.created_at,
+    date: b.createdAt ?? b.created_at ?? '',
     isArrears: Boolean(b.is_arrears),
   };
 }
