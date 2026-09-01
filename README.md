@@ -1,4 +1,4 @@
-# Welcome to your Expo app 👋
+# Welcome to your Expo app 
 
 This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
 
@@ -59,3 +59,18 @@ Join our community of developers creating universal apps.
 - [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
 - [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
 
+## About SusuBox
+
+**SusuBox** is a digital rotational group savings and financial management mobile application built using React Native and Expo. It streamlines community savings (Susu), member tracking, and automated balance distribution.
+
+### Tech Stack
+- **Framework:** React Native / Expo (Expo Router)
+- **State & Data Management:** Supabase / Cloud Services
+- **Environment:** Node.js & EAS
+
+---
+
+## Authors & Contributors
+
+- **Seth Kwarteng** ([@iamsethkwarteng](https://github.com/iamsethkwarteng)) — *Lead Developer*
+- **Gabrielle Teenpang Lazia** ([@GabbieAizal001](https://github.com/GabbieAizal001)) — *Frontend / Application Development*
